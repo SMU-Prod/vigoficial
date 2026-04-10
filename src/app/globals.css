@@ -1,0 +1,423 @@
+@import "tailwindcss";
+
+:root {
+  /* ═══════════════════════════════════════════════════
+     Design System — Light Theme
+     Based on MineCloud DS tokens
+     ═══════════════════════════════════════════════════ */
+
+  /* Backgrounds */
+  --bg-primary: #F5F7FA;
+  --bg-secondary: #FFFFFF;
+  --bg-tertiary: #F8F9FC;
+  --bg-sidebar: #FFFFFF;
+  --bg-hover: #F0F4FF;
+  --bg-active: #E8EEFF;
+  --bg-input: #F5F7FA;
+  --bg-badge: #EEF1FF;
+
+  /* Text */
+  --text-primary: #1A1D26;
+  --text-secondary: #6B7280;
+  --text-tertiary: #9CA3AF;
+  --text-inverse: #FFFFFF;
+  --text-link: #4C6EF5;
+
+  /* Borders */
+  --border-primary: #E5E7EB;
+  --border-secondary: #F0F1F3;
+  --border-focus: #4C6EF5;
+
+  /* Brand / Primary */
+  --ds-primary: #4C6EF5;
+  --ds-primary-hover: #3B5BDB;
+  --ds-primary-light: #EDF2FF;
+  --ds-primary-text: #364FC7;
+
+  /* Legacy aliases — kept for backward compat across pages */
+  --vigi-navy: #364FC7;
+  --vigi-navy-light: #4C6EF5;
+  --vigi-gold: #4C6EF5;
+  --vigi-gold-light: #A5B4FC;
+  --vigi-gold-muted: rgba(76, 110, 245, 0.10);
+
+  /* Buttons */
+  --btn-primary: #4C6EF5;
+  --btn-primary-hover: #3B5BDB;
+  --btn-gold: #4C6EF5;
+
+  /* Status / Semantic */
+  --status-success: #22C55E;
+  --status-success-bg: #F0FDF4;
+  --status-warning: #F59E0B;
+  --status-warning-bg: #FFFBEB;
+  --status-danger: #EF4444;
+  --status-danger-bg: #FEF2F2;
+  --status-info: #3B82F6;
+  --status-info-bg: #EFF6FF;
+
+  /* Shadows */
+  --shadow-sm: 0 1px 2px rgba(0,0,0,0.05);
+  --shadow-md: 0 4px 12px rgba(0,0,0,0.08);
+  --shadow-lg: 0 8px 24px rgba(0,0,0,0.12);
+
+  /* Radius */
+  --radius-xs: 4px;
+  --radius-sm: 6px;
+  --radius-md: 8px;
+  --radius-lg: 12px;
+  --radius-xl: 16px;
+  --radius-full: 9999px;
+
+  /* Transition */
+  --transition: 0.15s ease;
+
+  color-scheme: light;
+}
+
+.dark {
+  /* ═══════════════════════════════════════════════════
+     Design System — Dark Theme
+     ═══════════════════════════════════════════════════ */
+
+  /* Backgrounds */
+  --bg-primary: #0F1117;
+  --bg-secondary: #1A1D28;
+  --bg-tertiary: #1E2130;
+  --bg-sidebar: #141620;
+  --bg-hover: #232738;
+  --bg-active: #2A3050;
+  --bg-input: #1E2130;
+  --bg-badge: #2A3050;
+
+  /* Text */
+  --text-primary: #E8EAF0;
+  --text-secondary: #9CA3B8;
+  --text-tertiary: #6B7290;
+  --text-inverse: #0F1117;
+  --text-link: #6C8CFF;
+
+  /* Borders */
+  --border-primary: #2A2D3A;
+  --border-secondary: #222530;
+  --border-focus: #6C8CFF;
+
+  /* Brand / Primary */
+  --ds-primary: #6C8CFF;
+  --ds-primary-hover: #8DA4FF;
+  --ds-primary-light: #1E2544;
+  --ds-primary-text: #8DA4FF;
+
+  /* Legacy aliases */
+  --vigi-navy: #8DA4FF;
+  --vigi-navy-light: #6C8CFF;
+  --vigi-gold: #6C8CFF;
+  --vigi-gold-light: #4C6EF5;
+  --vigi-gold-muted: rgba(108, 140, 255, 0.15);
+
+  /* Buttons */
+  --btn-primary: #4C6EF5;
+  --btn-primary-hover: #3B5BDB;
+  --btn-gold: #6C8CFF;
+
+  /* Status / Semantic */
+  --status-success: #34D399;
+  --status-success-bg: #0D2818;
+  --status-warning: #FBBF24;
+  --status-warning-bg: #2A1F05;
+  --status-danger: #F87171;
+  --status-danger-bg: #2A0F0F;
+  --status-info: #60A5FA;
+  --status-info-bg: #0F1A2E;
+
+  /* Shadows */
+  --shadow-sm: 0 1px 2px rgba(0,0,0,0.3);
+  --shadow-md: 0 4px 12px rgba(0,0,0,0.4);
+  --shadow-lg: 0 8px 24px rgba(0,0,0,0.5);
+
+  color-scheme: dark;
+}
+
+@theme inline {
+  --color-background: var(--bg-primary);
+  --color-foreground: var(--text-primary);
+  --font-sans: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+  --font-mono: 'JetBrains Mono', 'Fira Code', monospace;
+}
+
+body {
+  background: var(--bg-primary);
+  color: var(--text-primary);
+  font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+  font-size: 14px;
+  line-height: 1.5;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  transition: background-color 0.15s ease, color 0.15s ease;
+}
+
+/* Form elements respect theme */
+input, select, textarea, option {
+  color: var(--text-primary);
+  background-color: var(--bg-input);
+  border-color: var(--border-primary);
+}
+
+input::placeholder, textarea::placeholder {
+  color: var(--text-tertiary);
+}
+
+select option {
+  color: var(--text-primary);
+  background-color: var(--bg-secondary);
+}
+
+/* Scrollbar */
+::-webkit-scrollbar { width: 6px; height: 6px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb { background: var(--border-primary); border-radius: 3px; }
+::-webkit-scrollbar-thumb:hover { background: var(--text-tertiary); }
+
+/* Focus rings — primary color */
+*:focus-visible {
+  outline: 2px solid var(--ds-primary);
+  outline-offset: 2px;
+}
+
+/* ═══════════════════════════════════════════════════
+   Utility Classes
+   ═══════════════════════════════════════════════════ */
+
+/* Card & surface utilities */
+.vigi-card {
+  background: var(--bg-secondary);
+  border: 1px solid var(--border-secondary);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-sm);
+  transition: all var(--transition);
+}
+.vigi-card:hover {
+  box-shadow: var(--shadow-md);
+}
+.vigi-card-flat {
+  background: var(--bg-secondary);
+  border: 1px solid var(--border-secondary);
+  border-radius: var(--radius-md);
+}
+.vigi-surface {
+  background: var(--bg-tertiary);
+  border-radius: var(--radius-md);
+}
+
+/* Text colors */
+.vigi-text { color: var(--text-primary); }
+.vigi-text-secondary { color: var(--text-secondary); }
+.vigi-text-muted { color: var(--text-tertiary); }
+
+/* Table rows */
+.vigi-table-row {
+  border-bottom: 1px solid var(--border-secondary);
+  transition: background-color var(--transition);
+}
+.vigi-table-row:hover {
+  background: var(--bg-hover);
+}
+.vigi-table-header {
+  background: var(--bg-tertiary);
+  color: var(--text-tertiary);
+  font-size: 11px;
+  font-weight: 500;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  border-bottom: 1px solid var(--border-primary);
+}
+
+/* Buttons */
+.vigi-btn-primary {
+  background: var(--btn-primary);
+  color: var(--text-inverse);
+  border: none;
+  border-radius: var(--radius-md);
+  font-weight: 500;
+  font-size: 13px;
+  cursor: pointer;
+  transition: background-color var(--transition);
+}
+.vigi-btn-primary:hover { background: var(--btn-primary-hover); }
+
+.vigi-btn-outline {
+  background: var(--bg-primary);
+  color: var(--text-primary);
+  border: 1px solid var(--border-primary);
+  border-radius: var(--radius-md);
+  cursor: pointer;
+  transition: all var(--transition);
+}
+.vigi-btn-outline:hover {
+  background: var(--bg-hover);
+}
+
+.vigi-btn-ghost {
+  background: transparent;
+  color: var(--text-link);
+  border: none;
+  border-radius: var(--radius-md);
+  cursor: pointer;
+  transition: background-color var(--transition);
+}
+.vigi-btn-ghost:hover {
+  background: var(--ds-primary-light);
+}
+
+/* Inputs */
+.vigi-input {
+  background: var(--bg-input);
+  color: var(--text-primary);
+  border: 1px solid var(--border-primary);
+  border-radius: var(--radius-md);
+  padding: 8px 12px;
+  font-size: 13px;
+  font-family: inherit;
+  transition: border-color var(--transition);
+}
+.vigi-input:focus {
+  border-color: var(--border-focus);
+  outline: none;
+  box-shadow: 0 0 0 3px rgba(76, 110, 245, 0.12);
+}
+
+/* Status badges */
+.vigi-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 3px 10px;
+  border-radius: var(--radius-full);
+  font-size: 11px;
+  font-weight: 500;
+}
+.vigi-badge-default { background: var(--bg-badge); color: var(--ds-primary-text); }
+.vigi-badge-success { background: var(--status-success-bg); color: var(--status-success); }
+.vigi-badge-warning { background: var(--status-warning-bg); color: var(--status-warning); }
+.vigi-badge-danger { background: var(--status-danger-bg); color: var(--status-danger); }
+.vigi-badge-info { background: var(--status-info-bg); color: var(--status-info); }
+.vigi-badge-gold { background: var(--vigi-gold-muted); color: var(--ds-primary); }
+
+/* KPI card */
+.vigi-kpi {
+  background: var(--bg-secondary);
+  border: 1px solid var(--border-secondary);
+  border-radius: var(--radius-lg);
+  padding: 16px 20px;
+  transition: all var(--transition);
+}
+
+/* Tab navigation */
+.vigi-tab {
+  color: var(--text-secondary);
+  padding: 8px 14px;
+  border-bottom: 2px solid transparent;
+  font-size: 13px;
+  cursor: pointer;
+  margin-bottom: -1px;
+  transition: all var(--transition);
+}
+.vigi-tab:hover { color: var(--text-primary); }
+.vigi-tab-active {
+  color: var(--ds-primary-text);
+  border-bottom-color: var(--ds-primary);
+  font-weight: 500;
+}
+
+/* Page header */
+.vigi-page-title {
+  color: var(--text-primary);
+  font-size: 24px;
+  font-weight: 600;
+  line-height: 1.3;
+}
+.vigi-page-subtitle {
+  color: var(--text-secondary);
+  font-size: 13px;
+}
+
+/* Nav items (sidebar) */
+.vigi-nav-item {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 12px;
+  border-radius: var(--radius-md);
+  font-size: 13px;
+  color: var(--text-secondary);
+  cursor: pointer;
+  transition: all var(--transition);
+}
+.vigi-nav-item:hover {
+  background: var(--bg-hover);
+  color: var(--text-primary);
+}
+.vigi-nav-item-active {
+  background: var(--bg-active);
+  color: var(--ds-primary-text);
+  font-weight: 500;
+}
+
+/* Dropdown */
+.vigi-dropdown {
+  background: var(--bg-secondary);
+  border: 1px solid var(--border-primary);
+  border-radius: var(--radius-md);
+  box-shadow: var(--shadow-md);
+  padding: 4px;
+}
+.vigi-dropdown-item {
+  padding: 7px 12px;
+  border-radius: var(--radius-xs);
+  font-size: 13px;
+  color: var(--text-primary);
+  cursor: pointer;
+  transition: background-color var(--transition);
+}
+.vigi-dropdown-item:hover {
+  background: var(--bg-hover);
+}
+
+/* Progress */
+.vigi-progress-track {
+  height: 6px;
+  background: var(--bg-input);
+  border-radius: 3px;
+  overflow: hidden;
+}
+.vigi-progress-fill {
+  height: 100%;
+  background: var(--ds-primary);
+  border-radius: 3px;
+  transition: width 0.3s;
+}
+
+/* Toggle */
+.vigi-toggle {
+  width: 36px;
+  height: 20px;
+  border-radius: 10px;
+  background: var(--border-primary);
+  position: relative;
+  cursor: pointer;
+  transition: background var(--transition);
+}
+.vigi-toggle.on {
+  background: var(--ds-primary);
+}
+
+/* Avatar */
+.vigi-avatar {
+  border-radius: 50%;
+  background: var(--bg-badge);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-weight: 600;
+  color: var(--ds-primary-text);
+}

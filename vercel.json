@@ -1,0 +1,36 @@
+{
+  "crons": [
+    {
+      "path": "/api/cron/trigger",
+      "schedule": "0 6,10,14,18,22 * * 1-6"
+    },
+    {
+      "path": "/api/cron/light",
+      "schedule": "0 8,20 * * 0"
+    },
+    {
+      "path": "/api/cron/billing",
+      "schedule": "0 1 * * *"
+    },
+    {
+      "path": "/api/cron/reports",
+      "schedule": "0 7 * * 1"
+    },
+    {
+      "path": "/api/cron/health-check",
+      "schedule": "*/15 * * * *"
+    },
+    {
+      "path": "/api/cron/iml-distill",
+      "schedule": "0 3 * * *"
+    },
+    {
+      "path": "/api/dou/scrape",
+      "schedule": "0 6 * * 1-5"
+    },
+    {
+      "path": "/api/cron/prospector",
+      "schedule": "0 7 * * 1-5"
+    }
+  ]
+}

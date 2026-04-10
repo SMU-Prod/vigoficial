@@ -1,0 +1,294 @@
+{
+  "area": "Frontend & API Layer",
+  "files_analyzed": [
+    "src/app/layout.tsx",
+    "src/app/page.tsx",
+    "src/app/globals.css",
+    "src/app/global-error.tsx",
+    "src/app/(auth)/layout.tsx",
+    "src/app/(auth)/login/page.tsx",
+    "src/app/(dashboard)/layout.tsx",
+    "src/app/(dashboard)/loading.tsx",
+    "src/app/(dashboard)/error.tsx",
+    "src/app/(dashboard)/dashboard/page.tsx",
+    "src/app/(dashboard)/empresas/page.tsx",
+    "src/app/(dashboard)/prospeccao/page.tsx",
+    "src/app/(dashboard)/financeiro/page.tsx",
+    "src/app/(dashboard)/admin/usuarios/page.tsx",
+    "src/app/(portal)/layout.tsx",
+    "src/app/api/auth/login/route.ts",
+    "src/app/api/auth/me/route.ts",
+    "src/app/api/companies/route.ts",
+    "src/app/api/companies/[id]/route.ts",
+    "src/app/api/prospects/route.ts",
+    "src/app/api/billing/route.ts",
+    "src/app/api/webhooks/asaas/route.ts",
+    "src/app/api/webhooks/gps/route.ts",
+    "src/app/api/cron/health-check/route.ts",
+    "src/app/api/cron/billing/route.ts",
+    "src/app/api/dou/scrape/route.ts",
+    "src/app/api/health/route.ts",
+    "src/components/ui/error-boundary.tsx",
+    "src/hooks/useAuth.ts",
+    "src/hooks/use-fetch.ts",
+    "src/lib/auth/middleware.ts",
+    "src/lib/auth/jwt.ts",
+    "src/lib/security/rate-limit.ts",
+    "src/lib/utils.ts",
+    "src/lib/formatters.ts",
+    "src/lib/design-tokens.ts",
+    "src/middleware.ts"
+  ],
+  "findings": [
+    {
+      "severity": "high",
+      "title": "Excessive use of 'any' type in API routes",
+      "file": "src/app/api",
+      "line": 130,
+      "description": "130 occurrences of 'any' type found across 36 API route files. This completely bypasses TypeScript's type safety, making it impossible to catch runtime errors at build time. Examples include parsing user input, Supabase response handling, and form data processing.",
+      "recommendation": "Replace all 'any' types with proper interfaces. Create strict type definitions for all API request/response payloads. Use Zod schemas for runtime validation and automatic type inference via z.infer<typeof schema>."
+    },
+    {
+      "severity": "critical",
+      "title": "Missing CSRF protection on state-changing operations",
+      "file": "src/middleware.ts",
+      "line": 36,
+      "description": "Public routes like /api/webhooks are accessible without CSRF tokens or origin validation. The webhook authentication relies only on header secrets, which can be intercepted. No CSRF token validation on state-changing POST operations to /api/companies, /api/prospects, etc.",
+      "recommendation": "Implement CSRF token middleware for all POST/PUT/DELETE routes. Validate origin header and referer. Use same-site cookies. Add CSRF token generation and validation utilities."
+    },
+    {
+      "severity": "high",
+      "title": "Webhook signature verification is optional and incomplete",
+      "file": "src/app/api/webhooks/asaas/route.ts",
+      "line": 14,
+      "description": "ASAAS webhook signature verification only happens if ASAAS_WEBHOOK_SECRET exists (line 14: 'if (webhookSecret)'). No verification = webhook accepts any payload. GPS webhook uses simple Bearer token comparison, which is weak. No replay attack protection.",
+      "recommendation": "Make signature verification mandatory, not optional. Implement HMAC-SHA256 verification for both webhooks. Add timestamp validation to prevent replay attacks. Store webhook signatures in database with retry tracking."
+    },
+    {
+      "severity": "high",
+      "title": "No input validation on critical payment webhook",
+      "file": "src/app/api/webhooks/asaas/route.ts",
+      "line": 28,
+      "description": "Payment webhook processes { event, payment } without validation. No checks for malformed payment object, missing fields, or invalid data types. Can cause undefined behavior when updating billing status based on untrusted event data.",
+      "recommendation": "Add Zod schema validation for webhook payloads. Validate event types enum, payment object structure, and all critical fields before processing. Log all validation failures for security audit."
+    },
+    {
+      "severity": "high",
+      "title": "Unvalidated query parameters in prospects API",
+      "file": "src/app/api/prospects/route.ts",
+      "line": 34,
+      "description": "Query parameters like 'limit', 'offset', 'orderBy', 'orderDir' are parsed directly without range validation. A malicious user can request limit=999999 or orderBy='malicious_sql'. orderDir accepts any string value, not just 'asc'/'desc'.",
+      "recommendation": "Validate all query parameters: limit (1-100), offset (>=0), orderBy (whitelist allowed columns), orderDir (enum: 'asc'|'desc'). Use Zod for query param validation."
+    },
+    {
+      "severity": "high",
+      "title": "Missing error boundary on critical dashboard pages",
+      "file": "src/app/(dashboard)/prospeccao/page.tsx",
+      "line": 1,
+      "description": "Large client components like prospeccao/page.tsx, empresas/page.tsx lack specific error boundaries. Only root ErrorBoundary exists. If data fetching fails mid-render, users see generic error message without specific context.",
+      "recommendation": "Add error.tsx files to dashboard subdirectories. Wrap data fetching sections in <Suspense> boundaries. Create component-level error boundaries for critical sections like kanban boards and tables."
+    },
+    {
+      "severity": "medium",
+      "title": "useFetch hook doesn't handle network errors gracefully",
+      "file": "src/hooks/use-fetch.ts",
+      "line": 70,
+      "description": "HTTP error responses throw immediately (line 70-71). No retry logic. AbortError suppression (line 79) is correct, but generic errors aren't logged. Network timeout isn't handled (uses default fetch timeout of ~30s).",
+      "recommendation": "Add exponential backoff retry logic with configurable attempts. Implement request timeout parameter. Add detailed error logging with request context. Handle 401/403 separately for auth token refresh."
+    },
+    {
+      "severity": "medium",
+      "title": "Login page transmits sensitive data via URL parameters",
+      "file": "src/app/(auth)/login/page.tsx",
+      "line": 48,
+      "description": "JWT token passed as URL query parameter: `window.location.href = /auth/callback?token=XXX`. Tokens are logged in browser history, server logs, and referrer headers. Violates OWASP guidelines.",
+      "recommendation": "Use POST-redirect-GET pattern. Send token in httpOnly cookie directly from /api/auth/login, avoid URL parameters entirely. Or use secure session exchange endpoint."
+    },
+    {
+      "severity": "medium",
+      "title": "No rate limiting on login endpoint before auth check",
+      "file": "src/app/api/auth/login/route.ts",
+      "line": 16,
+      "description": "Rate limiting happens (line 16-19), but happens AFTER payload parsing and before email validation. A brute force attack can still enumerate valid emails. Account lockout blocks for 1 hour, no exponential backoff.",
+      "recommendation": "Move rate limiting BEFORE request body parsing. Implement exponential backoff (15 min, 1 hour, 24 hours). Store lockout state in cache with automatic expiry. Return generic error for both invalid email and invalid password."
+    },
+    {
+      "severity": "high",
+      "title": "Insecure cron job authentication",
+      "file": "src/middleware.ts",
+      "line": 42,
+      "description": "Cron endpoints authenticated via Bearer token in Authorization header. Token is plaintext in environment variable, potentially exposed in logs, process listings. IP whitelist is optional (only if CRON_ALLOWED_IPS set). No request signing or timestamps.",
+      "recommendation": "Use request signing with HMAC-SHA256 + timestamp. Implement strict IP whitelist (mandatory). Add request body signing. Use short-lived credentials rotated regularly. Log all cron requests with auth details."
+    },
+    {
+      "severity": "high",
+      "title": "Role-based access control has edge cases",
+      "file": "src/lib/auth/middleware.ts",
+      "line": 32,
+      "description": "Role hierarchy calculation uses numeric comparison, but if role string is typo'd or missing from hierarchy object, it defaults to 0 (less than any valid role). No audit log when authorization fails. canAccessCompany() doesn't validate companyId format.",
+      "recommendation": "Use enum for roles, not strings. Add validation that all users have valid roles in DB. Log all authorization failures with user, attempted action, and result. Implement audit trail for permission changes."
+    },
+    {
+      "severity": "medium",
+      "title": "Missing Suspense boundaries on data-heavy pages",
+      "file": "src/app/(dashboard)/prospeccao/page.tsx",
+      "line": 1,
+      "description": "Prospeccao page fetches multiple datasets (prospects, companies, activities) all in parallel without Suspense. If any fetch fails, entire page shows loading skeleton. No granular loading states.",
+      "recommendation": "Wrap independent data sections in separate <Suspense> boundaries with isolated error.tsx. Use React.lazy() for tabs. Implement progressive loading UI showing loaded sections."
+    },
+    {
+      "severity": "medium",
+      "title": "TypeScript type casting bypasses safety",
+      "file": "src/app/api/companies/route.ts",
+      "line": 81,
+      "description": "Using (parsed as any) throughout company creation (line 81, 82). Removes type safety from validated schema. Same pattern in prospects, employees. Defeats purpose of Zod validation.",
+      "recommendation": "Use z.infer<typeof schema> for automatic type inference. Remove 'as any' casts. If type mismatch exists, refactor schema or code, don't cast. Use type assertion only after exhausting alternatives."
+    },
+    {
+      "severity": "medium",
+      "title": "No SQL injection protection in search/filter operations",
+      "file": "src/app/api/prospects/route.ts",
+      "line": 36,
+      "description": "orderBy parameter (line 36) is passed directly to database query. Supabase query builder is parameterized, but orderBy='id;DROP TABLE...' could still cause issues if mishandled. No allowlist.",
+      "recommendation": "Create allowlist of safe column names. Validate orderBy against allowlist before using in query. Use Zod enum for orderBy validation. Same for orderDir and other query directives."
+    },
+    {
+      "severity": "medium",
+      "title": "Error responses expose internal implementation details",
+      "file": "src/app/api/auth/login/route.ts",
+      "line": 128,
+      "description": "console.error logs full error with stack trace (line 128). Error returned to client doesn't include stack, but logs are accessible. Errors mention specific DB/service names (e.g., 'Supabase error').",
+      "recommendation": "Log errors with error ID for support tracking. Return generic error message to client. Include error ID in response header or body for tracking. Implement error monitoring (Sentry, etc.) separate from user-facing responses."
+    },
+    {
+      "severity": "high",
+      "title": "MFA temporary token not invalidated after use",
+      "file": "src/lib/auth/jwt.ts",
+      "line": 31,
+      "description": "MFA temp token (5 min TTL) is signed but never removed from circulation after use. A token can be reused if intercepted. No blacklist or one-time-use enforcement.",
+      "recommendation": "After successful MFA verification, store token hash in Redis blacklist with TTL. Check blacklist before accepting token. Alternatively, implement one-time-use mechanism with token consumption flag in DB."
+    },
+    {
+      "severity": "medium",
+      "title": "Missing authentication on public portal routes",
+      "file": "src/app/(portal)/layout.tsx",
+      "line": 1,
+      "description": "Portal layout redirects all traffic to /login, but portal pages (documentos, painel, suporte, validades) exist as route files without proper auth. If routes become accessible, they have no auth checks.",
+      "recommendation": "Implement proper auth middleware for (portal) routes. Use middleware.ts to enforce authentication. Create portal-specific error pages and loading states."
+    },
+    {
+      "severity": "medium",
+      "title": "Billing webhook can enable companies without verification",
+      "file": "src/app/api/webhooks/asaas/route.ts",
+      "line": 74,
+      "description": "First payment automatically enables company (line 74-85: 'habilitada: true'). No email verification or manual review. If webhook signature is spoofed, attacker can enable any company.",
+      "recommendation": "Add manual verification step for first-time enabled companies. Send admin email notification. Implement payment verification with Asaas API before enabling. Add audit log entry with all details."
+    },
+    {
+      "severity": "medium",
+      "title": "No rate limiting on dashboard KPI fetching",
+      "file": "src/app/(dashboard)/dashboard/page.tsx",
+      "line": 10,
+      "description": "Dashboard refetches KPIs every 60 seconds without rate limiting on client side. With 100 concurrent users, backend receives 100 requests/minute. No request debouncing or conditional fetching.",
+      "recommendation": "Add server-side rate limiting per user/company. Implement conditional requests (If-None-Match, Last-Modified). Add request deduplication. Increase refetch interval or use WebSocket for real-time updates."
+    },
+    {
+      "severity": "low",
+      "title": "Design tokens have inconsistent naming conventions",
+      "file": "src/app/globals.css",
+      "line": 38,
+      "description": "CSS variables mix naming conventions: --vigi-navy vs --ds-primary, legacy aliases (--vigi-gold) alongside modern tokens (--ds-primary). Causes confusion and inconsistent usage across components.",
+      "recommendation": "Standardize on single naming convention (recommend --ds-*). Deprecate legacy aliases. Create migration guide for components. Use design-tokens.ts as source of truth for colors."
+    },
+    {
+      "severity": "medium",
+      "title": "useAuth hook doesn't handle token expiry gracefully",
+      "file": "src/hooks/useAuth.ts",
+      "line": 45,
+      "description": "useAuth fetches /api/auth/me on mount and on refresh. If token expires mid-session, it's not detected until next 401 response. No automatic token refresh mechanism. Users experience random 401 errors.",
+      "recommendation": "Implement automatic token refresh on 401. Use axios interceptor pattern to retry failed requests with new token. Add token expiry listener that proactively refreshes before expiry. Store refresh token separately."
+    },
+    {
+      "severity": "medium",
+      "title": "No pagination cursor validation",
+      "file": "src/app/(dashboard)/empresas/page.tsx",
+      "line": 74,
+      "description": "Pagination uses offset/limit (line 74-77). No validation that user doesn't exceed total pages. Page parameter can be negative or non-integer. No cursor-based pagination for large datasets.",
+      "recommendation": "Validate page/size parameters. Implement cursor-based pagination for datasets >10k records. Add total count caching. Add aria labels for pagination accessibility."
+    },
+    {
+      "severity": "low",
+      "title": "Hardcoded business constants in components",
+      "file": "src/app/(dashboard)/prospeccao/page.tsx",
+      "line": 65,
+      "description": "ROTTING_DAYS (7, 14), PIPELINE_STAGES, PLANO_VALORES all hardcoded in component. Changes require code deployment. No centralized configuration.",
+      "recommendation": "Move constants to config/constants.ts or fetch from API. Implement admin panel to manage business rules. Add environment variables for feature flags."
+    },
+    {
+      "severity": "high",
+      "title": "No HTTPS enforcement in middleware",
+      "file": "src/middleware.ts",
+      "line": 26,
+      "description": "Auth cookie uses 'secure' flag only if NODE_ENV === 'production', not based on actual HTTPS. If app runs on HTTP in prod, secure flag is false, cookie exposed over plaintext.",
+      "recommendation": "Check request protocol, not NODE_ENV. Set secure=true only on HTTPS. Add HSTS header in middleware. Reject HTTP connections to auth routes."
+    },
+    {
+      "severity": "medium",
+      "title": "Missing accessibility attributes on interactive elements",
+      "file": "src/app/(dashboard)/layout.tsx",
+      "line": 250,
+      "description": "Navigation section toggles (line 250) don't have aria-expanded, aria-controls. Theme switcher buttons (line 131-144) lack aria-label consistency. No keyboard navigation feedback.",
+      "recommendation": "Add aria-expanded, aria-controls to collapsible sections. Ensure all interactive elements have aria-label or aria-labelledby. Test with WCAG 2.1 AA checklist. Add focus-visible styles for keyboard navigation."
+    },
+    {
+      "severity": "low",
+      "title": "Missing SEO metadata on most pages",
+      "file": "src/app/(dashboard)/dashboard/page.tsx",
+      "line": 1,
+      "description": "Dashboard and most app pages are missing metadata export. No Open Graph tags, structured data, or page-specific descriptions for dashboards.",
+      "recommendation": "Add generateMetadata() function to main app pages. Include page title, description. Add structured data for company/prospect entities. Implement dynamic metadata based on user company."
+    },
+    {
+      "severity": "low",
+      "title": "No loading skeleton consistency across pages",
+      "file": "src/app/(dashboard)/dashboard/page.tsx",
+      "line": 38,
+      "description": "Loading skeleton uses generic placeholder (grid of boxes). Companies, prospects, financial pages show full-page skeleton. No consistent loading animation or branded placeholders.",
+      "recommendation": "Create reusable skeleton components that match actual content shape. Add staggered animation for visual interest. Use content-aware skeletons (e.g., table skeletons for tables)."
+    },
+    {
+      "severity": "medium",
+      "title": "Error messages lack actionable guidance",
+      "file": "src/app/(dashboard)/error.tsx",
+      "line": 37,
+      "description": "Error pages show generic 'something went wrong' message. No context-specific guidance. Development errors are only shown in dev mode, but production errors are unhelpful.",
+      "recommendation": "Map error codes to user-friendly messages with suggested actions. Example: '404 Company not found - Try searching the companies list' or '403 You don't have access to this company'. Add support contact info."
+    },
+    {
+      "severity": "high",
+      "title": "Concurrent API calls not deduplicated",
+      "file": "src/hooks/use-fetch.ts",
+      "line": 43,
+      "description": "useFetch aborts previous request (line 50-51) but doesn't deduplicate concurrent requests to same URL. If component mounts twice or parent refetch happens, two identical requests fire.",
+      "recommendation": "Implement request deduplication at hook level. Use Map<URL, Promise> to share pending requests. Add request caching with TTL. Consider React Query or SWR library."
+    },
+    {
+      "severity": "medium",
+      "title": "No content security policy headers",
+      "file": "src/middleware.ts",
+      "line": 1,
+      "description": "No CSP headers set in middleware. Allows inline scripts, eval, and external resource loading without restrictions. No protection against XSS via injected scripts.",
+      "recommendation": "Add CSP middleware setting strict-dynamic, nonce-based inline scripts. Whitelist APIs and image sources. Add report-uri for CSP violations. Test with CSP validator."
+    },
+    {
+      "severity": "low",
+      "title": "Magic strings used instead of constants",
+      "file": "src/app/(auth)/login/page.tsx",
+      "line": 169,
+      "description": "API endpoint '/api/auth/login' hardcoded in component. Role strings ('admin', 'operador', 'viewer') scattered throughout. No centralized constant definitions.",
+      "recommendation": "Create constants.ts with API_ENDPOINTS, ROLES, STATUS_CODES. Import from central location. Use enums for role and status types."
+    }
+  ],
+  "score": 58,
+  "summary": "The VIGI PRO frontend and API layer has solid fundamentals with proper error boundaries, auth middleware, and rate limiting. However, critical security vulnerabilities exist: (1) Excessive 'any' types completely bypass TypeScript safety; (2) CSRF protection is missing; (3) Webhook signature verification is optional; (4) JWT tokens exposed in URLs; (5) Cron auth relies on plaintext bearer tokens. Data validation is inconsistent, with some routes properly using Zod while others cast untrusted input as 'any'. The dashboard has good loading/error states, but pages lack Suspense boundaries for granular loading. Accessibility needs improvements (aria labels, keyboard navigation). The code would benefit from: (1) strict TypeScript enforcement (no 'any'); (2) centralized type definitions; (3) mandatory CSRF protection; (4) webhook signing with HMAC; (5) proper error handling and monitoring; (6) rate limiting refinement; (7) comprehensive test coverage. Overall architecture is sound but execution has security and type-safety gaps."
+}

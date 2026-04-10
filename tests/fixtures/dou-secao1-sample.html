@@ -1,0 +1,801 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Diário Oficial da União - Seção 1 - {{DATE}}</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: 'Arial', 'Helvetica', sans-serif;
+            color: #333;
+            background: #f9f9f9;
+            line-height: 1.6;
+        }
+
+        .dou-container {
+            max-width: 900px;
+            margin: 0 auto;
+            background: white;
+            padding: 0;
+        }
+
+        .header-dou {
+            background: linear-gradient(135deg, #003d82 0%, #004da6 100%);
+            color: white;
+            padding: 30px 20px;
+            text-align: center;
+            border-bottom: 5px solid #ffc107;
+        }
+
+        .header-dou h1 {
+            font-size: 32px;
+            margin-bottom: 10px;
+            font-weight: bold;
+        }
+
+        .metadata {
+            display: flex;
+            justify-content: center;
+            gap: 40px;
+            margin-top: 15px;
+            font-size: 14px;
+            flex-wrap: wrap;
+        }
+
+        .metadata span {
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+        }
+
+        .metadata strong {
+            display: block;
+            font-size: 12px;
+            color: #ffc107;
+            margin-bottom: 3px;
+        }
+
+        nav.breadcrumb {
+            padding: 15px 20px;
+            background: #f0f0f0;
+            border-bottom: 1px solid #ddd;
+            font-size: 12px;
+        }
+
+        nav.breadcrumb a {
+            color: #003d82;
+            text-decoration: none;
+            margin: 0 5px;
+        }
+
+        nav.breadcrumb a:hover {
+            text-decoration: underline;
+        }
+
+        .content {
+            padding: 20px;
+        }
+
+        .materia {
+            margin-bottom: 30px;
+            padding: 20px;
+            border: 1px solid #ddd;
+            background: #ffffff;
+            page-break-inside: avoid;
+            border-left: 4px solid #003d82;
+        }
+
+        .materia:hover {
+            background: #f9f9f9;
+            box-shadow: 0 2px 8px rgba(0,0,0,0.1);
+        }
+
+        .materia.security-related {
+            border-left-color: #d32f2f;
+            background: #fff5f5;
+        }
+
+        .materia.security-related .orgao {
+            color: #d32f2f;
+        }
+
+        .orgao {
+            font-size: 13px;
+            font-weight: bold;
+            color: #003d82;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+            margin-bottom: 5px;
+        }
+
+        .secretaria {
+            font-size: 12px;
+            color: #666;
+            font-style: italic;
+            margin-bottom: 10px;
+        }
+
+        .titulo {
+            font-size: 16px;
+            font-weight: bold;
+            color: #1a1a1a;
+            margin: 12px 0;
+            line-height: 1.4;
+        }
+
+        .conteudo {
+            font-size: 13px;
+            color: #333;
+            line-height: 1.8;
+        }
+
+        .conteudo p {
+            margin: 8px 0;
+        }
+
+        .conteudo strong {
+            font-weight: bold;
+            color: #1a1a1a;
+        }
+
+        .campo-valor {
+            display: grid;
+            grid-template-columns: 200px 1fr;
+            gap: 15px;
+            margin: 8px 0;
+            padding: 5px 0;
+        }
+
+        .campo-valor.meia {
+            grid-template-columns: 1fr 1fr;
+        }
+
+        .campo-nome {
+            font-weight: bold;
+            color: #003d82;
+        }
+
+        .campo-valor-texto {
+            color: #333;
+            word-break: break-word;
+        }
+
+        .referencia-legal {
+            font-size: 12px;
+            color: #666;
+            margin-top: 10px;
+            padding-top: 10px;
+            border-top: 1px solid #eee;
+            font-style: italic;
+        }
+
+        .footer {
+            background: #f0f0f0;
+            padding: 20px;
+            text-align: center;
+            font-size: 12px;
+            color: #666;
+            border-top: 1px solid #ddd;
+        }
+
+        .non-security {
+            border-left-color: #999;
+            opacity: 0.9;
+        }
+
+        .footer-page {
+            page-break-after: always;
+            margin-top: 40px;
+            padding-top: 20px;
+            border-top: 2px solid #003d82;
+            text-align: center;
+            font-weight: bold;
+            color: #003d82;
+        }
+    </style>
+</head>
+<body>
+    <div class="dou-container">
+        <!-- Header -->
+        <div class="header-dou">
+            <h1>DIÁRIO OFICIAL DA UNIÃO</h1>
+            <div class="metadata">
+                <span>
+                    <strong>Publicado em:</strong>
+                    {{DATE}}
+                </span>
+                <span>
+                    <strong>Edição:</strong>
+                    0064
+                </span>
+                <span>
+                    <strong>Seção:</strong>
+                    {{SECTION}}
+                </span>
+                <span>
+                    <strong>Imprensa Nacional</strong>
+                </span>
+            </div>
+        </div>
+
+        <!-- Breadcrumb -->
+        <nav class="breadcrumb">
+            <a href="/">Início</a> / <a href="/servicos/diario-oficial">Diário Oficial</a> /
+            <a href="/servicos/diario-oficial/secao-1">Seção 1</a> / {{DATE}}
+        </nav>
+
+        <!-- Content -->
+        <div class="content">
+
+            <!-- ARTIGO 1: Renovação de Alvará - SECURITEC VIGILÂNCIA LTDA (SP) -->
+            <article class="materia security-related">
+                <div class="orgao">Ministério da Justiça e Segurança Pública</div>
+                <div class="secretaria">Departamento de Entidades de Segurança Privada - DELESP/SP</div>
+                <div class="titulo">RENOVAÇÃO DE ALVARÁ DE FUNCIONAMENTO</div>
+                <div class="conteudo">
+                    <p>Conforme disposto na Lei nº 7.102/83 e regulamentações complementares, renova-se o <strong>alvará de funcionamento para empresa de segurança privada</strong> listada a seguir:</p>
+                    <div class="campo-valor">
+                        <span class="campo-nome">Empresa:</span>
+                        <span class="campo-valor-texto">SECURITEC VIGILÂNCIA E PROTEÇÃO LTDA</span>
+                    </div>
+                    <div class="campo-valor">
+                        <span class="campo-nome">CNPJ:</span>
+                        <span class="campo-valor-texto">12.345.678/0001-91</span>
+                    </div>
+                    <div class="campo-valor">
+                        <span class="campo-nome">Alvará nº:</span>
+                        <span class="campo-valor-texto">SP-2023-1847/DELESP</span>
+                    </div>
+                    <div class="campo-valor">
+                        <span class="campo-nome">Endereço:</span>
+                        <span class="campo-valor-texto">Rua das Flores, 1500 - São Paulo - SP</span>
+                    </div>
+                    <div class="campo-valor">
+                        <span class="campo-nome">Data da Renovação:</span>
+                        <span class="campo-valor-texto">31 de março de 2026</span>
+                    </div>
+                    <div class="campo-valor">
+                        <span class="campo-nome">Nova Validade:</span>
+                        <span class="campo-valor-texto">31 de março de 2029</span>
+                    </div>
+                    <div class="campo-valor">
+                        <span class="campo-nome">Atividades Autorizadas:</span>
+                        <span class="campo-valor-texto">Vigilância patrimonial, escolta de pessoas, transporte de valores, monitoramento eletrônico</span>
+                    </div>
+                    <div class="referencia-legal">Lei nº 7.102/83 | Portaria nº 3.233/2012/MJ | Circular nº 18.045/DELESP-SP</div>
+                </div>
+            </article>
+
+            <!-- ARTIGO 2: Cancelamento de Alvará - VIGILÂNCIA NOTURNA LTDA (RJ) -->
+            <article class="materia security-related">
+                <div class="orgao">Ministério da Justiça e Segurança Pública</div>
+                <div class="secretaria">Departamento de Entidades de Segurança Privada - DELESP/RJ</div>
+                <div class="titulo">CANCELAMENTO DE ALVARÁ DE FUNCIONAMENTO</div>
+                <div class="conteudo">
+                    <p>Conforme resolução do Departamento de Entidades de Segurança Privada, <strong>cancela-se o alvará de funcionamento</strong> da empresa abaixo relacionada por decisão administrativa:</p>
+                    <div class="campo-valor">
+                        <span class="campo-nome">Empresa:</span>
+                        <span class="campo-valor-texto">VIGILÂNCIA NOTURNA DO BRASIL LTDA</span>
+                    </div>
+                    <div class="campo-valor">
+                        <span class="campo-nome">CNPJ:</span>
+                        <span class="campo-valor-texto">98.765.432/0001-42</span>
+                    </div>
+                    <div class="campo-valor">
+                        <span class="campo-nome">Alvará nº:</span>
+                        <span class="campo-valor-texto">RJ-2019-0892/DELESP</span>
+                    </div>
+                    <div class="campo-valor">
+                        <span class="campo-nome">Motivo do Cancelamento:</span>
+                        <span class="campo-valor-texto">Encerramento de atividades e solicitação da empresa, conforme comunicação oficial</span>
+                    </div>
+                    <div class="campo-valor">
+                        <span class="campo-nome">Data do Cancelamento:</span>
+                        <span class="campo-valor-texto">25 de março de 2026</span>
+                    </div>
+                    <div class="referencia-legal">Lei nº 7.102/83 | Portaria nº 3.233/2012/MJ</div>
+                </div>
+            </article>
+
+            <!-- ARTIGO 3: CNV Publicada - JOÃO CARLOS SILVA SANTOS -->
+            <article class="materia security-related">
+                <div class="orgao">Ministério da Justiça e Segurança Pública</div>
+                <div class="secretaria">Departamento de Entidades de Segurança Privada - DELESP-SP</div>
+                <div class="titulo">PUBLICAÇÃO DE CARTEIRA NACIONAL DE VIGILANTE</div>
+                <div class="conteudo">
+                    <p>Conforme Circular nº 18.045/DELESP-SP/2024, registra-se a emissão e validade da <strong>Carteira Nacional de Vigilante - CNV</strong> abaixo discriminada:</p>
+                    <div class="campo-valor">
+                        <span class="campo-nome">Nome:</span>
+                        <span class="campo-valor-texto">JOÃO CARLOS SILVA SANTOS</span>
+                    </div>
+                    <div class="campo-valor">
+                        <span class="campo-nome">CPF:</span>
+                        <span class="campo-valor-texto">123.456.789-10</span>
+                    </div>
+                    <div class="campo-valor">
+                        <span class="campo-nome">Número da CNV:</span>
+                        <span class="campo-valor-texto">0123456789/SP</span>
+                    </div>
+                    <div class="campo-valor">
+                        <span class="campo-nome">Data de Emissão:</span>
+                        <span class="campo-valor-texto">15 de março de 2024</span>
+                    </div>
+                    <div class="campo-valor">
+                        <span class="campo-nome">Data de Validade:</span>
+                        <span class="campo-valor-texto">15 de março de 2027</span>
+                    </div>
+                    <div class="campo-valor">
+                        <span class="campo-nome">Especialidade:</span>
+                        <span class="campo-valor-texto">Vigilância Patrimonial e Escolta</span>
+                    </div>
+                    <div class="campo-valor">
+                        <span class="campo-nome">UF Emissora:</span>
+                        <span class="campo-valor-texto">São Paulo (SP)</span>
+                    </div>
+                    <div class="referencia-legal">Lei nº 7.102/83 | Portaria nº 3.233/2012/MJ | Circular nº 18.045/DELESP-SP</div>
+                </div>
+            </article>
+
+            <!-- ARTIGO 4: Renovação de Alvará - VIGILÂNCIA BRASIL SEGURANÇA S.A. (RJ) -->
+            <article class="materia security-related">
+                <div class="orgao">Ministério da Justiça e Segurança Pública</div>
+                <div class="secretaria">Departamento de Entidades de Segurança Privada - DELESP/RJ</div>
+                <div class="titulo">RENOVAÇÃO DE ALVARÁ DE FUNCIONAMENTO - VIGILÂNCIA ARMADA</div>
+                <div class="conteudo">
+                    <p>Sob a responsabilidade da Lei nº 7.102/83 e regulamentações complementares (Portaria 3.233/2012), <strong>renova-se o alvará de funcionamento</strong> para empresa especializada em segurança privada:</p>
+                    <div class="campo-valor">
+                        <span class="campo-nome">Empresa:</span>
+                        <span class="campo-valor-texto">VIGILÂNCIA BRASIL SEGURANÇA S.A.</span>
+                    </div>
+                    <div class="campo-valor">
+                        <span class="campo-nome">CNPJ:</span>
+                        <span class="campo-valor-texto">88.776.543/0001-55</span>
+                    </div>
+                    <div class="campo-valor">
+                        <span class="campo-nome">Alvará nº:</span>
+                        <span class="campo-valor-texto">RJ-2021-4562/DELESP</span>
+                    </div>
+                    <div class="campo-valor">
+                        <span class="campo-nome">Endereço Matriz:</span>
+                        <span class="campo-valor-texto">Avenida Rio Branco, 901 - Rio de Janeiro - RJ</span>
+                    </div>
+                    <div class="campo-valor">
+                        <span class="campo-nome">Data da Renovação:</span>
+                        <span class="campo-valor-texto">20 de março de 2026</span>
+                    </div>
+                    <div class="campo-valor">
+                        <span class="campo-nome">Validade:</span>
+                        <span class="campo-valor-texto">20 de março de 2029</span>
+                    </div>
+                    <div class="campo-valor">
+                        <span class="campo-nome">Modalidades Autorizadas:</span>
+                        <span class="campo-valor-texto">Vigilância armada, escolta armada, transporte de valores, segurança em eventos</span>
+                    </div>
+                    <div class="referencia-legal">Lei nº 7.102/83 | Portaria nº 3.233/2012/MJ | Decreto nº 1.437/1992</div>
+                </div>
+            </article>
+
+            <!-- ARTIGO 5: CNV Publicada - MARINA OLIVEIRA COSTA -->
+            <article class="materia security-related">
+                <div class="orgao">Ministério da Justiça e Segurança Pública</div>
+                <div class="secretaria">Departamento de Entidades de Segurança Privada - DELESP-MG</div>
+                <div class="titulo">PUBLICAÇÃO DE CARTEIRA NACIONAL DE VIGILANTE</div>
+                <div class="conteudo">
+                    <p>Faz-se público que foi registrada e validada a seguinte <strong>Carteira Nacional de Vigilante</strong> conforme procedimentos regulamentares:</p>
+                    <div class="campo-valor">
+                        <span class="campo-nome">Nome:</span>
+                        <span class="campo-valor-texto">MARINA OLIVEIRA COSTA</span>
+                    </div>
+                    <div class="campo-valor">
+                        <span class="campo-nome">CPF:</span>
+                        <span class="campo-valor-texto">987.654.321-05</span>
+                    </div>
+                    <div class="campo-valor">
+                        <span class="campo-nome">Número da CNV:</span>
+                        <span class="campo-valor-texto">9876543210/MG</span>
+                    </div>
+                    <div class="campo-valor">
+                        <span class="campo-nome">Data de Emissão:</span>
+                        <span class="campo-valor-texto">22 de fevereiro de 2023</span>
+                    </div>
+                    <div class="campo-valor">
+                        <span class="campo-nome">Data de Validade:</span>
+                        <span class="campo-valor-texto">22 de fevereiro de 2026</span>
+                    </div>
+                    <div class="campo-valor">
+                        <span class="campo-nome">Especialidade:</span>
+                        <span class="campo-valor-texto">Vigilância Patrimonial</span>
+                    </div>
+                    <div class="campo-valor">
+                        <span class="campo-nome">UF:</span>
+                        <span class="campo-valor-texto">Minas Gerais (MG)</span>
+                    </div>
+                    <div class="referencia-legal">Lei nº 7.102/83 | Circular nº 18.045/DELESP-MG</div>
+                </div>
+            </article>
+
+            <!-- ARTIGO 6: Renovação de Alvará - SHIELD PROTEÇÃO E VIGILÂNCIA (MG) -->
+            <article class="materia security-related">
+                <div class="orgao">Ministério da Justiça e Segurança Pública</div>
+                <div class="secretaria">Secretaria de Coordenação e Apoio a Programas/MJ - SECAP</div>
+                <div class="titulo">RENOVAÇÃO DO ALVARÁ DE FUNCIONAMENTO</div>
+                <div class="conteudo">
+                    <p>Renova-se por mais três (3) anos o <strong>alvará de funcionamento de empresa de segurança privada</strong> abaixo especificada, conforme análise favorável dos órgãos competentes:</p>
+                    <div class="campo-valor">
+                        <span class="campo-nome">Empresa:</span>
+                        <span class="campo-valor-texto">SHIELD PROTEÇÃO E VIGILÂNCIA LTDA</span>
+                    </div>
+                    <div class="campo-valor">
+                        <span class="campo-nome">CNPJ:</span>
+                        <span class="campo-valor-texto">45.678.901/0001-23</span>
+                    </div>
+                    <div class="campo-valor">
+                        <span class="campo-nome">Alvará nº:</span>
+                        <span class="campo-valor-texto">MG-2022-7823/DELESP</span>
+                    </div>
+                    <div class="campo-valor">
+                        <span class="campo-nome">Endereço:</span>
+                        <span class="campo-valor-texto">Av. Getúlio Vargas, 1800 - Belo Horizonte - MG</span>
+                    </div>
+                    <div class="campo-valor">
+                        <span class="campo-nome">Data da Renovação:</span>
+                        <span class="campo-valor-texto">28 de fevereiro de 2026</span>
+                    </div>
+                    <div class="campo-valor">
+                        <span class="campo-nome">Nova Validade:</span>
+                        <span class="campo-valor-texto">28 de fevereiro de 2029</span>
+                    </div>
+                    <div class="campo-valor">
+                        <span class="campo-nome">Modalidades Autorizadas:</span>
+                        <span class="campo-valor-texto">Vigilância patrimonial, escolta, transporte de valores, monitoramento remoto</span>
+                    </div>
+                    <div class="referencia-legal">Lei nº 7.102/83 | Portaria nº 3.233/2012/MJ | Resolução SECAP/MJ nº 14/2026</div>
+                </div>
+            </article>
+
+            <!-- ARTIGO 7: Portaria Normativa -->
+            <article class="materia security-related">
+                <div class="orgao">Ministério da Justiça e Segurança Pública</div>
+                <div class="secretaria">Departamento de Entidades de Segurança Privada - DELESP</div>
+                <div class="titulo">PORTARIA Nº 1.247/MJ/2026</div>
+                <div class="conteudo">
+                    <p>O Ministério da Justiça, por esta Portaria, <strong>estabelece novas diretrizes para empresas de vigilância privada</strong>:</p>
+                    <div class="campo-valor">
+                        <span class="campo-nome">Assunto:</span>
+                        <span class="campo-valor-texto">Regulamentação sobre equipamentos de segurança para empresas de vigilância privada</span>
+                    </div>
+                    <div class="campo-valor">
+                        <span class="campo-nome">Data de Publicação:</span>
+                        <span class="campo-valor-texto">31 de março de 2026</span>
+                    </div>
+                    <div class="campo-valor">
+                        <span class="campo-nome">Vigência:</span>
+                        <span class="campo-valor-texto">A partir da data de publicação</span>
+                    </div>
+                    <p><strong>Resumo:</strong> Define padrões técnicos mínimos para equipamentos de vigilância, incluindo câmeras de segurança, sistemas de alarme inteligente e comunicação em tempo real. Obrigatório cumprimento das exigências por todas as empresas de segurança privada licenciadas em até 180 dias da publicação.</p>
+                    <div class="referencia-legal">Lei nº 7.102/83 | Portaria nº 3.233/2012/MJ | Decreto nº 8.126/2013</div>
+                </div>
+            </article>
+
+            <!-- ARTIGO 8: Auto de Infração -->
+            <article class="materia security-related">
+                <div class="orgao">Ministério da Justiça e Segurança Pública</div>
+                <div class="secretaria">Departamento de Entidades de Segurança Privada - DELESP/DF</div>
+                <div class="titulo">AUTO DE INFRAÇÃO Nº 2026-0001156</div>
+                <div class="conteudo">
+                    <p>Lavrado contra empresa de segurança privada por <strong>infração à legislação de vigilância</strong>:</p>
+                    <div class="campo-valor">
+                        <span class="campo-nome">Empresa:</span>
+                        <span class="campo-valor-texto">VIGILÂNCIA EXPRESSA EIRELI-ME</span>
+                    </div>
+                    <div class="campo-valor">
+                        <span class="campo-nome">CNPJ:</span>
+                        <span class="campo-valor-texto">56.789.012/0001-34</span>
+                    </div>
+                    <div class="campo-valor">
+                        <span class="campo-nome">Motivo da Infração:</span>
+                        <span class="campo-valor-texto">Operar sem alvará de funcionamento válido e funcionários sem CNV registrada</span>
+                    </div>
+                    <div class="campo-valor">
+                        <span class="campo-nome">Artigos Violados:</span>
+                        <span class="campo-valor-texto">Art. 15 e Art. 17 da Lei nº 7.102/83</span>
+                    </div>
+                    <div class="campo-valor">
+                        <span class="campo-nome">Multa Aplicada:</span>
+                        <span class="campo-valor-texto">R$ 8.500,00 (oito mil e quinhentos reais)</span>
+                    </div>
+                    <div class="campo-valor">
+                        <span class="campo-nome">Data da Autuação:</span>
+                        <span class="campo-valor-texto">25 de março de 2026</span>
+                    </div>
+                    <div class="campo-valor">
+                        <span class="campo-nome">Prazo para Regularização:</span>
+                        <span class="campo-valor-texto">30 dias</span>
+                    </div>
+                    <div class="referencia-legal">Lei nº 7.102/83 | Portaria nº 3.233/2012/MJ | Decreto nº 1.437/1992</div>
+                </div>
+            </article>
+
+            <!-- ARTIGO 9: CNV Publicada - CARLOS EDUARDO LIMA FERREIRA -->
+            <article class="materia security-related">
+                <div class="orgao">Ministério da Justiça e Segurança Pública</div>
+                <div class="secretaria">Departamento de Entidades de Segurança Privada - DELESP-RS</div>
+                <div class="titulo">PUBLICAÇÃO DE CARTEIRA NACIONAL DE VIGILANTE</div>
+                <div class="conteudo">
+                    <p>Conforme procedimentos estabelecidos, registra-se a emissão de <strong>Carteira Nacional de Vigilante - CNV</strong> para profissional habilitado:</p>
+                    <div class="campo-valor">
+                        <span class="campo-nome">Nome:</span>
+                        <span class="campo-valor-texto">CARLOS EDUARDO LIMA FERREIRA</span>
+                    </div>
+                    <div class="campo-valor">
+                        <span class="campo-nome">CPF:</span>
+                        <span class="campo-valor-texto">456.789.123-45</span>
+                    </div>
+                    <div class="campo-valor">
+                        <span class="campo-nome">Número da CNV:</span>
+                        <span class="campo-valor-texto">4567891234/RS</span>
+                    </div>
+                    <div class="campo-valor">
+                        <span class="campo-nome">Data de Emissão:</span>
+                        <span class="campo-valor-texto">10 de janeiro de 2024</span>
+                    </div>
+                    <div class="campo-valor">
+                        <span class="campo-nome">Data de Validade:</span>
+                        <span class="campo-valor-texto">10 de janeiro de 2027</span>
+                    </div>
+                    <div class="campo-valor">
+                        <span class="campo-nome">Especialidade:</span>
+                        <span class="campo-valor-texto">Escolta Armada e Transporte de Valores</span>
+                    </div>
+                    <div class="campo-valor">
+                        <span class="campo-nome">UF:</span>
+                        <span class="campo-valor-texto">Rio Grande do Sul (RS)</span>
+                    </div>
+                    <div class="referencia-legal">Lei nº 7.102/83 | Circular nº 18.045/DELESP-RS</div>
+                </div>
+            </article>
+
+            <!-- ARTIGO 10: Autorização de Funcionamento (Nova Empresa) -->
+            <article class="materia security-related">
+                <div class="orgao">Ministério da Justiça e Segurança Pública</div>
+                <div class="secretaria">Departamento de Entidades de Segurança Privada - DELESP/BA</div>
+                <div class="titulo">AUTORIZAÇÃO DE FUNCIONAMENTO - NOVA EMPRESA DE SEGURANÇA PRIVADA</div>
+                <div class="conteudo">
+                    <p>Conforme análise favorável do Departamento de Entidades de Segurança Privada, <strong>autoriza-se o funcionamento</strong> da empresa de segurança privada abaixo relacionada:</p>
+                    <div class="campo-valor">
+                        <span class="campo-nome">Empresa:</span>
+                        <span class="campo-valor-texto">PROTEÇÃO INTEGRAL SEGURANÇA S.A.</span>
+                    </div>
+                    <div class="campo-valor">
+                        <span class="campo-nome">CNPJ:</span>
+                        <span class="campo-valor-texto">67.890.234/0001-56</span>
+                    </div>
+                    <div class="campo-valor">
+                        <span class="campo-nome">Alvará nº:</span>
+                        <span class="campo-valor-texto">BA-2026-0156/DELESP</span>
+                    </div>
+                    <div class="campo-valor">
+                        <span class="campo-nome">Endereço:</span>
+                        <span class="campo-valor-texto">Av. Sete de Setembro, 567 - Salvador - BA</span>
+                    </div>
+                    <div class="campo-valor">
+                        <span class="campo-nome">Data da Autorização:</span>
+                        <span class="campo-valor-texto">18 de março de 2026</span>
+                    </div>
+                    <div class="campo-valor">
+                        <span class="campo-nome">Validade:</span>
+                        <span class="campo-valor-texto">18 de março de 2029</span>
+                    </div>
+                    <div class="campo-valor">
+                        <span class="campo-nome">Modalidades Autorizadas:</span>
+                        <span class="campo-valor-texto">Vigilância patrimonial, monitoramento eletrônico, vigilância hospitalar</span>
+                    </div>
+                    <div class="referencia-legal">Lei nº 7.102/83 | Portaria nº 3.233/2012/MJ | Resolução DELESP nº 45/2026</div>
+                </div>
+            </article>
+
+            <!-- ARTIGO 11: Cassação de Alvará -->
+            <article class="materia security-related">
+                <div class="orgao">Ministério da Justiça e Segurança Pública</div>
+                <div class="secretaria">Departamento de Entidades de Segurança Privada - DELESP/PE</div>
+                <div class="titulo">CASSAÇÃO DE ALVARÁ DE FUNCIONAMENTO</div>
+                <div class="conteudo">
+                    <p>Em conformidade com procedimentos administrativos, <strong>decide-se pela cassação do alvará</strong> da empresa abaixo especificada por violações reiteradas à legislação:</p>
+                    <div class="campo-valor">
+                        <span class="campo-nome">Empresa:</span>
+                        <span class="campo-valor-texto">SEGURANÇA RÁPIDA VIGILÂNCIA LTDA</span>
+                    </div>
+                    <div class="campo-valor">
+                        <span class="campo-nome">CNPJ:</span>
+                        <span class="campo-valor-texto">78.901.345/0001-67</span>
+                    </div>
+                    <div class="campo-valor">
+                        <span class="campo-nome">Alvará nº:</span>
+                        <span class="campo-valor-texto">PE-2018-0521/DELESP</span>
+                    </div>
+                    <div class="campo-valor">
+                        <span class="campo-nome">Motivo:</span>
+                        <span class="campo-valor-texto">Violações reiteradas dos arts. 16 e 19 da Lei 7.102/83; inobservância de normas de segurança</span>
+                    </div>
+                    <div class="campo-valor">
+                        <span class="campo-nome">Data da Cassação:</span>
+                        <span class="campo-valor-texto">22 de março de 2026</span>
+                    </div>
+                    <div class="campo-valor">
+                        <span class="campo-nome">Prazo Recursal:</span>
+                        <span class="campo-valor-texto">30 dias a contar da publicação</span>
+                    </div>
+                    <div class="referencia-legal">Lei nº 7.102/83 | Portaria nº 3.233/2012/MJ | Lei nº 9.784/99 (Processo Administrativo)</div>
+                </div>
+            </article>
+
+            <!-- ARTIGO 12: Revisão de Autorização -->
+            <article class="materia security-related">
+                <div class="orgao">Ministério da Justiça e Segurança Pública</div>
+                <div class="secretaria">Departamento de Entidades de Segurança Privada - DELESP/RJ</div>
+                <div class="titulo">REVISÃO DE AUTORIZAÇÃO - AMPLIAÇÃO DE MODALIDADES</div>
+                <div class="conteudo">
+                    <p>Autoriza-se a <strong>revisão e ampliação das modalidades de atividade</strong> para empresa de segurança privada já licenciada:</p>
+                    <div class="campo-valor">
+                        <span class="campo-nome">Empresa:</span>
+                        <span class="campo-valor-texto">PROTEÇÃO ESTRATÉGICA SEGURANÇA LTDA</span>
+                    </div>
+                    <div class="campo-valor">
+                        <span class="campo-nome">CNPJ:</span>
+                        <span class="campo-valor-texto">34.567.890/0001-12</span>
+                    </div>
+                    <div class="campo-valor">
+                        <span class="campo-nome">Alvará Atual:</span>
+                        <span class="campo-valor-texto">RJ-2020-3245/DELESP</span>
+                    </div>
+                    <div class="campo-valor">
+                        <span class="campo-nome">Modalidades Anteriores:</span>
+                        <span class="campo-valor-texto">Vigilância patrimonial</span>
+                    </div>
+                    <div class="campo-valor">
+                        <span class="campo-nome">Modalidades Adicionadas:</span>
+                        <span class="campo-valor-texto">Escolta armada, transporte de valores, investigação privada</span>
+                    </div>
+                    <div class="campo-valor">
+                        <span class="campo-nome">Data da Revisão:</span>
+                        <span class="campo-valor-texto">29 de março de 2026</span>
+                    </div>
+                    <div class="referencia-legal">Lei nº 7.102/83 | Portaria nº 3.233/2012/MJ | Decreto nº 1.437/1992</div>
+                </div>
+            </article>
+
+            <!-- ARTIGO 13: Processo Punitivo - Advertência -->
+            <article class="materia security-related">
+                <div class="orgao">Ministério da Justiça e Segurança Pública</div>
+                <div class="secretaria">Departamento de Entidades de Segurança Privada - DELESP/SP</div>
+                <div class="titulo">PROCESSO ADMINISTRATIVO PUNITIVO - ADVERTÊNCIA</div>
+                <div class="conteudo">
+                    <p>Resultado de processo administrativo conduzido contra empresa de segurança privada:</p>
+                    <div class="campo-valor">
+                        <span class="campo-nome">Empresa:</span>
+                        <span class="campo-valor-texto">VIGILÂNCIA EXECUTIVA PREMIUM LTDA</span>
+                    </div>
+                    <div class="campo-valor">
+                        <span class="campo-nome">CNPJ:</span>
+                        <span class="campo-valor-texto">23.456.789/0001-90</span>
+                    </div>
+                    <div class="campo-valor">
+                        <span class="campo-nome">Processo nº:</span>
+                        <span class="campo-valor-texto">2026-PAP-0523/DELESP-SP</span>
+                    </div>
+                    <div class="campo-valor">
+                        <span class="campo-nome">Infração Apurada:</span>
+                        <span class="campo-valor-texto">Falha em documentação de pessoal; negligência em treinamento de vigilantes</span>
+                    </div>
+                    <div class="campo-valor">
+                        <span class="campo-nome">Penalidade:</span>
+                        <span class="campo-valor-texto">ADVERTÊNCIA ADMINISTRATIVA</span>
+                    </div>
+                    <div class="campo-valor">
+                        <span class="campo-nome">Data da Decisão:</span>
+                        <span class="campo-valor-texto">26 de março de 2026</span>
+                    </div>
+                    <div class="campo-valor">
+                        <span class="campo-nome">Prazo para Recurso:</span>
+                        <span class="campo-valor-texto">30 dias</span>
+                    </div>
+                    <div class="referencia-legal">Lei nº 7.102/83 | Portaria nº 3.233/2012/MJ | Lei nº 9.784/99</div>
+                </div>
+            </article>
+
+            <!-- ARTIGO 14: Resultado de Recurso -->
+            <article class="materia security-related">
+                <div class="orgao">Ministério da Justiça e Segurança Pública</div>
+                <div class="secretaria">Departamento de Entidades de Segurança Privada - DELESP</div>
+                <div class="titulo">DECISÃO SOBRE RECURSO ADMINISTRATIVO</div>
+                <div class="conteudo">
+                    <p>Resultado do julgamento de recurso administrativo interposto contra decisão anterior:</p>
+                    <div class="campo-valor">
+                        <span class="campo-nome">Empresa:</span>
+                        <span class="campo-valor-texto">SEGURANÇA CORPORATIVA BRASIL LTDA</span>
+                    </div>
+                    <div class="campo-valor">
+                        <span class="campo-nome">CNPJ:</span>
+                        <span class="campo-valor-texto">89.012.345/0001-78</span>
+                    </div>
+                    <div class="campo-valor">
+                        <span class="campo-nome">Recurso nº:</span>
+                        <span class="campo-valor-texto">REC-2026-0089/DELESP</span>
+                    </div>
+                    <div class="campo-valor">
+                        <span class="campo-nome">Decisão Anterior:</span>
+                        <span class="campo-valor-texto">Cassação de alvará (23/02/2026)</span>
+                    </div>
+                    <div class="campo-valor">
+                        <span class="campo-nome">Resultado do Recurso:</span>
+                        <span class="campo-valor-texto">PARCIALMENTE PROCEDENTE - Cassação reduzida a Suspensão por 6 meses</span>
+                    </div>
+                    <div class="campo-valor">
+                        <span class="campo-nome">Período de Suspensão:</span>
+                        <span class="campo-valor-texto">31 de março de 2026 a 30 de setembro de 2026</span>
+                    </div>
+                    <div class="campo-valor">
+                        <span class="campo-nome">Data da Decisão:</span>
+                        <span class="campo-valor-texto">30 de março de 2026</span>
+                    </div>
+                    <div class="referencia-legal">Lei nº 7.102/83 | Portaria nº 3.233/2012/MJ | Lei nº 9.784/99</div>
+                </div>
+            </article>
+
+            <!-- NON-SECURITY ARTICLES TO ENSURE FILTERING -->
+            <!-- ARTIGO 15: Ministério da Saúde -->
+            <article class="materia non-security">
+                <div class="orgao">Ministério da Saúde</div>
+                <div class="secretaria">Secretaria de Vigilância Sanitária</div>
+                <div class="titulo">PORTARIA Nº 892/MS/2026 - REGULAMENTAÇÃO DE FARMACOVIGILÂNCIA</div>
+                <div class="conteudo">
+                    <p>O Ministério da Saúde estabelece normas para monitoramento de eventos adversos de medicamentos:</p>
+                    <p><strong>Assunto:</strong> Regulamentação de farmacovigilância em medicamentos de alto risco</p>
+                    <p><strong>Vigência:</strong> 90 dias após publicação</p>
+                    <div class="referencia-legal">Lei nº 6.360/76 | Resolução RDC nº 221/2018</div>
+                </div>
+            </article>
+
+            <!-- ARTIGO 16: Ministério da Educação -->
+            <article class="materia non-security">
+                <div class="orgao">Ministério da Educação</div>
+                <div class="secretaria">Secretaria de Avaliação, Planejamento e Gestão</div>
+                <div class="titulo">PORTARIA Nº 456/MEC/2026 - CREDENCIAMENTO DE INSTITUIÇÕES</div>
+                <div class="conteudo">
+                    <p>Credencia-se instituições educacionais para programas de educação continuada:</p>
+                    <p><strong>Instituições Credenciadas:</strong> 15 (quinze) instituições educacionais federais</p>
+                    <p><strong>Período de Validade:</strong> 4 (quatro) anos</p>
+                    <div class="referencia-legal">Lei nº 9.394/96 | Decreto nº 5.773/2006</div>
+                </div>
+            </article>
+
+            <!-- ARTIGO 17: IBAMA -->
+            <article class="materia non-security">
+                <div class="orgao">Instituto Brasileiro do Meio Ambiente e dos Recursos Naturais Renováveis</div>
+                <div class="secretaria">Diretoria de Licenciamento Ambiental</div>
+                <div class="titulo">EDITAL DE LICITAÇÃO Nº 2026-IBAMA/SP</div>
+                <div class="conteudo">
+                    <p>Abre-se processo de licitação para contratação de serviços de monitoramento ambiental:</p>
+                    <p><strong>Objeto:</strong> Prestação de serviços de monitoramento de qualidade ambiental em 5 (cinco) unidades</p>
+                    <p><strong>Período de Execução:</strong> 24 meses</p>
+                    <div class="referencia-legal">Lei nº 8.666/93 | Lei nº 10.520/02</div>
+                </div>
+            </article>
+
+        </div>
+
+        <!-- Footer -->
+        <div class="footer">
+            <p>Publicação Eletrônica do Diário Oficial da União</p>
+            <p>Imprensa Nacional - Ministério da Justiça e Segurança Pública</p>
+            <p>Brasília, DF - {{DATE}}</p>
+        </div>
+    </div>
+</body>
+</html>

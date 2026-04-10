@@ -1,0 +1,298 @@
+import { firefox, type Browser, type BrowserContext, type Page } from "playwright";
+import { acquireGespLock, releaseGespLock } from "./lock";
+import { logger } from "@/lib/observability/logger";
+import * as path from "path";
+import * as fs from "fs";
+import * as os from "os";
+
+// Import sub-modules
+import { PageNavigator, delay } from "./page-navigator";
+import { FormFiller } from "./form-filler";
+import { DocumentExtractor, type TabelaRow } from "./document-extractor";
+import { ScreenshotManager } from "./screenshot-manager";
+
+// =============================================================================
+// VIGI — GESP Browser Automation
+// Baseado na documentação oficial da Polícia Federal:
+// https://www.gov.br/pf/pt-br/assuntos/seguranca-privada/sistemas/gesp
+//
+// FLUXO DE ACESSO GESP:
+// 1. Primeiro acesso: e-CNPJ obrigatório (certificado digital da empresa)
+// 2. Cadastra procuração eletrônica no GESP para procurador (pessoa física)
+// 3. Acessos seguintes: e-CPF do procurador (com procuração válida)
+// 4. Login via Login Único GOV.BR → opção "Seu Certificado Digital"
+// 5. Seleciona CNPJ da empresa (se procurador de múltiplas)
+//
+// NAVEGADOR COMPATÍVEL: Apenas Mozilla Firefox ESR
+// URL: https://www.gov.br/pf/pt-br/assuntos/seguranca-privada/sistemas → PGDWEB
+// Acesso direto: https://servicos.dpf.gov.br/gesp/
+//
+// TIPOS DE CERTIFICADO:
+// - e-CNPJ (A1 ou A3): Para primeiro acesso e cadastro de procuração
+// - e-CPF (A1 ou A3): Para procuradores com procuração cadastrada
+// - A1 = arquivo .pfx/.p12 importado no Firefox
+// - A3 = token USB/smartcard físico (não suportado em automação headless)
+//
+// IMPORTANTE: VIGI usa apenas certificados A1 (arquivo) para automação
+// =============================================================================
+
+type CertificadoTipo = "e-CNPJ" | "e-CPF";
+
+interface CertificadoConfig {
+  tipo: CertificadoTipo;
+  r2Path: string;
+  senha: string;
+  cnpjEmpresa: string;
+  cpfProcurador?: string;
+}
+
+interface ProcessoResult {
+  sucesso: boolean;
+  protocolo?: string | null;
+  turmaId?: string | null;
+  guiaId?: string | null;
+  numeroGuia?: string | null;
+  gruLinhaDigitavel?: string | null;
+  registrosProcessados?: number;
+  alunosImportados?: number;
+  mensagem?: string;
+  erros?: string[];
+  printAntes?: Buffer;
+  printDepois?: Buffer;
+  printScreen?: Buffer;
+  pendencias?: string[];
+}
+
+/**
+ * Gerencia sessões do navegador Firefox ESR para GESP
+ *
+ * Facade que coordena os sub-módulos:
+ * - PageNavigator: navegação e URLs
+ * - FormFiller: preenchimento de formulários
+ * - DocumentExtractor: extração de dados
+ * - ScreenshotManager: captura de screenshots
+ *
+ * PRD Regra R5: Máx. 1 sessão por empresa, 3 browsers no servidor
+ */
+export class GespBrowser {
+  private browser: Browser | null = null;
+  private context: BrowserContext | null = null;
+  private page: Page | null = null;
+  private companyId: string;
+  private sessionId: string | null = null;
+  private tempProfileDir: string | null = null;
+
+  // Sub-modules
+  private pageNavigator: PageNavigator | null = null;
+  private formFiller: FormFiller | null = null;
+  private documentExtractor: DocumentExtractor | null = null;
+  private screenshotManager: ScreenshotManager | null = null;
+
+  constructor(companyId: string) {
+    this.companyId = companyId;
+  }
+
+  // =========================================================================
+  // ABERTURA DO BROWSER
+  // =========================================================================
+
+  /**
+   * Abre Firefox ESR com certificado digital importado
+   *
+   * @param certificado - Configuração do certificado digital
+   * @param pfxBuffer - Buffer do arquivo .pfx já baixado do R2
+   */
+  async open(certificado: CertificadoConfig, pfxBuffer: Buffer): Promise<void> {
+    const lockResult = await acquireGespLock(this.companyId);
+    if (!lockResult.acquired) {
+      throw new Error(`Falha ao adquirir lock GESP: ${lockResult.reason}`);
+    }
+    this.sessionId = lockResult.sessionId || null;
+
+    try {
+      this.tempProfileDir = await this.createFirefoxProfile(pfxBuffer, certificado.senha);
+
+      this.browser = await firefox.launch({
+        headless: true,
+        firefoxUserPrefs: {
+          "security.default_personal_cert": "Select Automatically",
+          "security.enterprise_roots.enabled": true,
+          "security.remember_cert_checkbox_default_setting": true,
+          "security.osclientcerts.autoload": true,
+        },
+        args: [
+          `-profile`, this.tempProfileDir,
+        ],
+      });
+
+      this.context = await this.browser.newContext({
+        ignoreHTTPSErrors: true,
+        viewport: { width: 1366, height: 768 },
+        locale: "pt-BR",
+        timezoneId: "America/Sao_Paulo",
+        userAgent: "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:115.0) Gecko/20100101 Firefox/115.0",
+      });
+
+      this.page = await this.context.newPage();
+      this.page.setDefaultTimeout(60_000);
+
+      // Initialize sub-modules
+      this.pageNavigator = new PageNavigator(this.page);
+      this.formFiller = new FormFiller(this.page);
+      this.documentExtractor = new DocumentExtractor(this.page);
+      this.screenshotManager = new ScreenshotManager(this.page);
+
+    } catch (err) {
+      if (this.sessionId) {
+        await releaseGespLock(this.sessionId);
+      }
+      this.cleanupTempProfile();
+      throw err;
+    }
+  }
+
+  // =========================================================================
+  // LOGIN
+  // =========================================================================
+
+  /**
+   * Executa login no GESP via Login Único GOV.BR
+   *
+   * @param cnpjEmpresa - CNPJ para selecionar (quando procurador de múltiplas empresas)
+   */
+  async login(cnpjEmpresa: string): Promise<boolean> {
+    if (!this.page || !this.pageNavigator || !this.screenshotManager) {
+      throw new Error("Browser não iniciado. Chame open() primeiro.");
+    }
+
+    try {
+      const GESP_URL = "https://servicos.dpf.gov.br/gesp/";
+      await this.page.goto(GESP_URL, { waitUntil: "networkidle", timeout: 45_000 });
+      await delay();
+
+      const currentUrl = this.page.url();
+
+      if (currentUrl.includes("acesso.gov.br") || currentUrl.includes("sso.")) {
+
+        const certButton = await this.page.$(
+          'button:has-text("Certificado Digital"), ' +
+          'a:has-text("Certificado Digital"), ' +
+          'button:has-text("Seu Certificado")'
+        );
+
+        if (certButton) {
+          await certButton.click();
+          await delay();
+        }
+
+        await this.pageNavigator.waitForURL(
+          (url) => url.href.includes("dpf.gov.br") || url.href.includes("gesp"),
+          30_000
+        );
+        await delay();
+      }
+
+      // Trata seleção de empresa (if procurator de múltiplas)
+      const cnpjSelector = await this.page.$(
+        'select:has(option), [name*="cnpj"], #cnpj, input[placeholder*="CNPJ"]'
+      );
+
+      if (cnpjSelector) {
+
+        const tagName = await cnpjSelector.evaluate((el: Element) => el.tagName.toLowerCase());
+        if (tagName === "select") {
+          const cnpjRaiz = cnpjEmpresa.replace(/\D/g, "").substring(0, 8);
+          const options = await cnpjSelector.$$eval('option', (opts: HTMLOptionElement[]) =>
+            opts.map((o) => ({ value: o.value, text: o.textContent || "" }))
+          );
+          const match = options.find((o) => o.text.includes(cnpjRaiz));
+          if (match) {
+            await cnpjSelector.selectOption(match.value);
+          }
+        } else {
+          await cnpjSelector.fill(cnpjEmpresa.replace(/\D/g, ""));
+        }
+        await delay(800);
+
+        const acessarBtn = await this.page.$(
+          'button:has-text("Acessar"), input[value*="Acessar"], button[type="submit"]'
+        );
+        if (acessarBtn) {
+          await acessarBtn.click();
+          await this.page.waitForLoadState("networkidle");
+          await delay();
+        }
+      }
+
+      const isLoggedIn = await this.pageNavigator.verifyLoggedIn();
+      if (isLoggedIn) {
+        await this.screenshotManager.screenshot("login-sucesso");
+        return true;
+      }
+
+      const _diagScreenshot = await this.screenshotManager.screenshot("login-falhou");
+      logger.error("Login falhou. Screenshot salvo para diagnóstico.", { url: this.page.url() });
+      return false;
+    } catch (err) {
+      logger.error("Erro durante login", err as Error);
+      return false;
+    }
+  }
+
+  // =========================================================================
+  // DELEGAÇÃO PARA SUB-MÓDULOS (Mantém backward compatibility)
+  // =========================================================================
+
+  // Métodos delegados do PageNavigator
+  private async navigateMenu(menuText: string, subItemText: string): Promise<void> {
+    if (!this.pageNavigator) throw new Error("Página não inicializada");
+    return this.pageNavigator.navigateMenu(menuText, subItemText);
+  }
+
+  private async waitForGespPage(): Promise<void> {
+    if (!this.pageNavigator) throw new Error("Página não inicializada");
+    return this.pageNavigator.waitForGespPage();
+  }
+
+  // Métodos delegados do FormFiller
+  private async fillFormField(labelText: string, value: string): Promise<void> {
+    if (!this.formFiller) throw new Error("Página não inicializada");
+    return this.formFiller.fillFormField(labelText, value);
+  }
+
+  private async selectDropdown(labelText: string, optionText: string): Promise<void> {
+    if (!this.formFiller) throw new Error("Página não inicializada");
+    return this.formFiller.selectDropdown(labelText, optionText);
+  }
+
+  private async clickTab(tabName: string): Promise<void> {
+    if (!this.formFiller) throw new Error("Página não inicializada");
+    return this.formFiller.clickTab(tabName);
+  }
+
+  private async uploadFile(buffer: Buffer, filename: string, inputSelector: string): Promise<void> {
+    if (!this.formFiller) throw new Error("Página não inicializada");
+    return this.formFiller.uploadFile(buffer, filename, inputSelector);
+  }
+
+  private async handleGespConfirmation(): Promise<string | null> {
+    if (!this.formFiller) return null;
+    return this.formFiller.handleGespConfirmation();
+  }
+
+  private async clickGespActionButton(action: "EXCLUIR" | "VERIFICAR" | "ENVIAR"): Promise<string | null> {
+    if (!this.formFiller) return null;
+    return this.formFiller.clickGespActionButton(action);
+  }
+
+  // Métodos delegados do DocumentExtractor
+  private async parseTable(selector: string = "table"): Promise<TabelaRow[]> {
+    if (!this.documentExtractor) return [];
+    return this.documentExtractor.parseTable(selector);
+  }
+
+  // Métodos delegados do ScreenshotManager
+  async screenshot(label: string): Promise<Buffer> {
+    if (!this.screenshotManager) return Buffer.alloc(0);
+    return this.screenshotManager.screenshot(label);
+  }

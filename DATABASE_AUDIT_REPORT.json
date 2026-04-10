@@ -1,0 +1,244 @@
+{
+  "area": "Database & Data Layer",
+  "files_analyzed": [
+    "supabase/migrations/001_tabelas_principais.sql",
+    "supabase/migrations/002_email_gesp.sql",
+    "supabase/migrations/003_config_views_rls.sql",
+    "supabase/migrations/20260330_agent_tables.sql",
+    "supabase/migrations/20260330_create_dou_monitor.sql",
+    "supabase/migrations/20260330_create_prospects.sql",
+    "supabase/migrations/20260403_email_threading_v2.sql",
+    "supabase/migrations/20260403_filiais_vigipro.sql",
+    "supabase/migrations/20260403_iml_fixes.sql",
+    "supabase/migrations/20260403_institutional_memory_layer.sql",
+    "supabase/migrations/20260403_procuracao_eletronica.sql",
+    "supabase/migrations/20260403_refresh_tokens.sql",
+    "supabase/migrations/20260404_companies_enrich_fields.sql",
+    "src/types/database.ts",
+    "src/lib/supabase/client.ts",
+    "src/lib/supabase/server.ts",
+    "src/lib/supabase/middleware.ts",
+    "src/lib/redis/cache.ts",
+    "src/lib/redis/connection.ts"
+  ],
+  "findings": [
+    {
+      "severity": "critical",
+      "title": "Unencrypted Hardcoded Password Hash in Database Seed",
+      "file": "supabase/migrations/001_tabelas_principais.sql",
+      "line": 33,
+      "description": "Default admin user has hardcoded bcrypt hash seeded in migration (admin@vigi.local / admin). Even though PRD specifies password must be changed, this hash is visible in version control and can be: 1) Reverse engineered if bcrypt rounds are weak. 2) Compromised if repository is public/leaked. 3) Used as reference for rainbow tables.",
+      "recommendation": "Remove hardcoded password from migration. Implement secure password generation endpoint during onboarding. Use environment-seeded initial credentials that expire. Consider using Supabase's built-in auth system instead of custom JWT."
+    },
+    {
+      "severity": "critical",
+      "title": "SQL Injection Vulnerability in Dynamic JSON Field Access",
+      "file": "supabase/migrations/003_config_views_rls.sql",
+      "line": 245,
+      "description": "Views query JSONB metadata fields (metadata->>'resumo', metadata->>'descricao') without parameterization. If these keys are user-controlled or derived from untrusted input, attackers could inject SQL-like syntax or escape the JSON context.",
+      "recommendation": "Use parameterized queries exclusively. Validate JSON key names against whitelist. Consider using jsonb_each_text() with explicit key extraction instead of arrow operators on computed generated columns."
+    },
+    {
+      "severity": "critical",
+      "title": "Missing UNIQUE Constraint on Email in Employees Table",
+      "file": "supabase/migrations/001_tabelas_principais.sql",
+      "line": 219,
+      "description": "Users table has UNIQUE(email) but employees table has UNIQUE(company_id, cpf). However, email field in employees has NO uniqueness constraint at company level. This allows duplicate emails per company, breaking email-based identity assumptions in email_workflows and threading system.",
+      "recommendation": "Add UNIQUE(company_id, email) constraint to employees table. Update email_inbound to validate from_email against this constraint before linking to company."
+    },
+    {
+      "severity": "high",
+      "title": "Missing Foreign Key Constraints on Array Columns",
+      "file": "supabase/migrations/002_email_gesp.sql",
+      "line": 102,
+      "description": "email_workflows stores gesp_task_ids UUID[] and email_outbound_ids UUID[] but these arrays have NO foreign key constraints. Orphaned IDs can accumulate in arrays without referential integrity. Array contains deleted task references leading to N+1 queries or corrupted state.",
+      "recommendation": "Normalize array columns into junction tables (workflow_tasks, workflow_emails) with proper FKs and CASCADE delete. Or create triggers to validate array elements on insert/update. Implement cleanup function to purge invalid UUIDs from arrays."
+    },
+    {
+      "severity": "high",
+      "title": "Missing NOT NULL Constraints on Critical Audit Fields",
+      "file": "supabase/migrations/001_tabelas_principais.sql",
+      "line": 48,
+      "description": "audit_log.acao is NOT NULL but audit_log.user_id is nullable (ON DELETE SET NULL). This breaks audit trail integrity — cannot trace who performed which action. Similarly, audit_log.ip is nullable, losing network origin data.",
+      "recommendation": "Add NOT NULL constraints to user_id and ip fields. Implement row-level security trigger to inject current_user_id. Use session context to auto-populate ip from request metadata. Make deletion cascade or soft-delete instead."
+    },
+    {
+      "severity": "high",
+      "title": "Unvalidated JSON Blobs Storing Sensitive Configuration",
+      "file": "supabase/migrations/001_tabelas_principais.sql",
+      "line": 86,
+      "description": "companies.alertas_ativos, employees.alertas_ativos, and vehicles.alertas_ativos store JSONB with boolean flags. These blobs have NO schema validation. Can store arbitrary nested objects, leading to data integrity issues and unexpected alert behavior.",
+      "recommendation": "Replace JSONB with specific columns (alertas_cnv, alertas_reciclagem, etc.) or use CHECK constraints with jsonb_matches(). Implement JSON schema validation at application level. Add audit trigger to log changes to alertas_* fields."
+    },
+    {
+      "severity": "high",
+      "title": "Missing Index on email_inbound workflow_id Lookups",
+      "file": "supabase/migrations/002_email_gesp.sql",
+      "line": 32,
+      "description": "email_inbound has idx_email_inbound_company (line 33) but NO index on (company_id, workflow_id) or (workflow_id, status). Queries like 'find all inbound emails for workflow X' will full-scan. Email threading queries (line 122) join on workflow_id without index.",
+      "recommendation": "Add composite indexes: CREATE INDEX idx_email_inbound_company_status ON email_inbound(company_id, status); CREATE INDEX idx_email_inbound_workflow ON email_inbound(workflow_id, received_at DESC)."
+    },
+    {
+      "severity": "high",
+      "title": "Circular Foreign Key Scenario in Filiais Structure",
+      "file": "supabase/migrations/20260403_filiais_vigipro.sql",
+      "line": 19,
+      "description": "companies.matriz_id references companies(id) with ON DELETE SET NULL. The CHECK constraint prevents deep cycles but does not prevent empresa A having matriz_id=B while B.tipo_unidade='filial'. Weak constraint logic allows inconsistent state (filial pointing to another filial).",
+      "recommendation": "Replace CHECK with trigger validating: IF NEW.tipo_unidade='filial' THEN matrix must have tipo_unidade='matriz'. Add recursive depth check. Consider materialized view of ancestry chain for compliance reporting."
+    },
+    {
+      "severity": "high",
+      "title": "N+1 Query Pattern in Comprehensive Compliance View (vw_validades_criticas)",
+      "file": "supabase/migrations/003_config_views_rls.sql",
+      "line": 262,
+      "description": "vw_validades_criticas performs 9 UNION ALL subqueries, each joining employees/companies separately. Loading this view executes 9 separate index scans even though they're in one view. Dashboard KPIs (line 491) calls this view every refresh — compounding performance impact.",
+      "recommendation": "Partition view into separate smaller views for specific compliance types (vw_validades_cnv, vw_validades_colete, etc.). Use application-layer query optimization to call only needed views. Consider materialized view with hourly refresh instead of real-time UNION ALL."
+    },
+    {
+      "severity": "high",
+      "title": "Unbounded JSONB Array in iml_insights.evidence_event_ids",
+      "file": "supabase/migrations/20260403_institutional_memory_layer.sql",
+      "line": 125,
+      "description": "iml_insights.evidence_event_ids is UUID[] with NO max size constraint. Over time, insights can accumulate 1000s of event IDs, bloating rows and slowing queries. No cleanup mechanism for old/expired insights.",
+      "recommendation": "Add CHECK constraint: CHECK(array_length(evidence_event_ids, 1) <= 1000). Implement archival function to move old insights to iml_insights_archive. Use array aggregation with LIMIT in queries instead of storing full array."
+    },
+    {
+      "severity": "high",
+      "title": "Missing Referential Integrity in DOU Module (dou_alvaras)",
+      "file": "supabase/migrations/20260330_create_dou_monitor.sql",
+      "line": 82,
+      "description": "dou_alvaras.publicacao_id references dou_publicacoes(id) ON DELETE CASCADE (correct). But dou_alvaras.company_id and dou_alvaras.prospect_id are nullable FKs without constraints. Orphaned alvaras (both NULL) can exist indefinitely, causing orphaned alerts.",
+      "recommendation": "Add CHECK constraint: CHECK((company_id IS NOT NULL) OR (prospect_id IS NOT NULL)). Implement trigger to enforce exactly one is set. Index on (company_id, prospect_id) for orphan detection queries."
+    },
+    {
+      "severity": "high",
+      "title": "Missing CASCADE Delete on email_workflows → email_outbound",
+      "file": "supabase/migrations/002_email_gesp.sql",
+      "line": 66,
+      "description": "email_outbound.workflow_id references email_workflows(id) but does not specify ON DELETE behavior (defaults to RESTRICT). Deleting a workflow is blocked if outbound emails exist. Dual reference inconsistency: outbound emails also stored in workflow array.",
+      "recommendation": "Add ON DELETE CASCADE to workflow_id FK. Audit code to remove redundant email_outbound_ids array from email_workflows — use junction table instead. Test cascade deletes in all scenarios."
+    },
+    {
+      "severity": "high",
+      "title": "Authentication Bypass Risk: service_role Bypasses All RLS",
+      "file": "supabase/migrations/003_config_views_rls.sql",
+      "line": 557,
+      "description": "Comments note backend uses service_role that bypasses RLS. While intentional, every RLS policy has 'Deny all for anon' as only defense. If service_role key is leaked, attacker bypasses all RLS. Zero audit logging of service_role operations.",
+      "recommendation": "Implement function-based RLS policies that do not bypass on service_role. Log all writes by service_role to audit table via triggers. Rotate service_role key monthly. Implement API-level authorization checks independent of RLS."
+    },
+    {
+      "severity": "medium",
+      "title": "Missing Index on Compliance Critical Path Queries",
+      "file": "supabase/migrations/003_config_views_rls.sql",
+      "line": 601,
+      "description": "idx_employees_cnv_ativo filters WHERE status = 'ativo' AND cnv_data_validade IS NOT NULL but does not include cnv_data_validade in index. Partial index is good for WHERE but query 'ORDER BY cnv_data_validade' still requires sort.",
+      "recommendation": "Create: CREATE INDEX idx_employees_cnv_date_ativo ON employees(cnv_data_validade ASC) WHERE status = 'ativo' AND cnv_data_validade IS NOT NULL;"
+    },
+    {
+      "severity": "medium",
+      "title": "Weak Constraint on parser_keywords.acao_automatica Values",
+      "file": "supabase/migrations/003_config_views_rls.sql",
+      "line": 92,
+      "description": "parser_keywords.acao_automatica is checked against hardcoded TEXT list. Zero validation that action exists in code or reference table. Code refactoring that renames action leaves database in inconsistent state.",
+      "recommendation": "Create parser_actions enum table. Add FK from parser_keywords.acao_automatica → parser_actions.name. Implement safe refactoring with database-first migrations."
+    },
+    {
+      "severity": "medium",
+      "title": "Missing Compound Index for Billing History Queries",
+      "file": "supabase/migrations/001_tabelas_principais.sql",
+      "line": 118,
+      "description": "billing_history has separate indexes on company_id, status, and data_vencimento but no compound index. Common query 'WHERE company_id=X AND status IN (...) ORDER BY data_vencimento' uses first index then filters and sorts.",
+      "recommendation": "Add: CREATE INDEX idx_billing_history_company_status_date ON billing_history(company_id, status, data_vencimento DESC);"
+    },
+    {
+      "severity": "medium",
+      "title": "Soft Deletes Not Implemented for Audit-Critical Tables",
+      "file": "supabase/migrations/001_tabelas_principais.sql",
+      "line": 46,
+      "description": "audit_log is immutable (correct) but no soft delete pattern elsewhere. Tables like employees use status='inativo' but hard deletes are possible via API. Zero triggers prevent hard deletes of compliance-critical records.",
+      "recommendation": "Add deleted_at TIMESTAMPTZ to employees, companies, job_posts, weapons. Implement trigger preventing hard deletes. Filter deleted records from views. Show only to admins with explicit DELETE flag."
+    },
+    {
+      "severity": "medium",
+      "title": "Missing Cache Invalidation Strategy for vw_dashboard_kpis",
+      "file": "supabase/migrations/003_config_views_rls.sql",
+      "line": 482,
+      "description": "vw_dashboard_kpis runs 9 COUNT(*) subqueries without indexes. Materialization crucial for performance. Redis cache.ts has CACHE_TTL.dashboard=300s but zero documented invalidation triggers when underlying data changes.",
+      "recommendation": "Create after-insert/update triggers on employees, email_workflows, vehicles, discrepancies calling cache invalidation. Implement trigger-based cache busting or event-driven invalidation."
+    },
+    {
+      "severity": "medium",
+      "title": "Weak Data Types for CNPJ Storage",
+      "file": "supabase/migrations/001_tabelas_principais.sql",
+      "line": 65,
+      "description": "companies.cnpj is TEXT NOT NULL UNIQUE: 1) No format validation (XX.XXX.XXX/XXXX-XX vs raw). 2) dou_alvaras.cnpj_limpo exists but companies doesn't. 3) No check digit validation. 4) Queries must normalize both sides.",
+      "recommendation": "Use DOMAIN: CREATE DOMAIN cnpj_type AS CHAR(14) CHECK(value ~ '^[0-9]{14}$'). Create cnpj_validate() with checksum. Migrate to normalized format."
+    },
+    {
+      "severity": "medium",
+      "title": "Race Condition in system_health.last_heartbeat Update",
+      "file": "supabase/migrations/20260330_agent_tables.sql",
+      "line": 84,
+      "description": "system_health has UNIQUE idx_system_health_component but zero locking. Multiple workers updating last_heartbeat simultaneously cause race conditions. Lost updates to error_count increment.",
+      "recommendation": "Use SELECT FOR UPDATE. Implement idempotent updates with atomic increment. Consider Redis for high-frequency updates instead of PostgreSQL."
+    },
+    {
+      "severity": "medium",
+      "title": "Webhook Idempotency Key Not Properly Scoped",
+      "file": "supabase/migrations/20260403_email_threading_v2.sql",
+      "line": 102,
+      "description": "webhook_processed(svix_id) stores webhook ID only, no endpoint differentiation. Same event_id to multiple endpoints rejected as duplicate on second call even if intended for different system.",
+      "recommendation": "Change PRIMARY KEY to composite (svix_id, endpoint). Add CHECK on endpoint format. Document idempotency semantics per endpoint."
+    },
+    {
+      "severity": "medium",
+      "title": "Missing NOT NULL Validation on email_outbound.template_id",
+      "file": "supabase/migrations/002_email_gesp.sql",
+      "line": 45,
+      "description": "email_outbound.template_id is TEXT NOT NULL with CHECK constraint, but CHECK only validates IN list. If template_id='UNKNOWN' (outside list), row fails. Code might send NULL expecting NULL safety.",
+      "recommendation": "Test all code paths sending to email_outbound. Add NOT NULL at application layer. Create enums table for templates with FK instead of CHECK."
+    },
+    {
+      "severity": "medium",
+      "title": "Insufficient Logging in Redis Cache Layer",
+      "file": "src/lib/redis/cache.ts",
+      "line": 83,
+      "description": "cacheGet, cacheSet silently swallow errors (catch {} blocks). Redis connection drop = zero logging. Monitoring misses cache failure until manual investigation. Performance degradation hidden.",
+      "recommendation": "Add structured logging: log('redis_error', {key, error, operation}). Implement Prometheus metrics. Alert on 'cache unavailable' state."
+    },
+    {
+      "severity": "medium",
+      "title": "Hardcoded Redis Configuration Without Validation",
+      "file": "src/lib/redis/connection.ts",
+      "line": 5,
+      "description": "Redis connection hardcodes 127.0.0.1:6379 defaults if env vars missing. Production silently falls back to localhost, causing undetected cache misses.",
+      "recommendation": "Validate Redis at startup, fail fast if unreachable. Use circuit breaker pattern. Implement health check endpoint. Document required Redis version/config."
+    },
+    {
+      "severity": "low",
+      "title": "Inconsistent Timestamp Naming Convention",
+      "file": "supabase/migrations/001_tabelas_principais.sql",
+      "line": 27,
+      "description": "Tables use mixed timestamp names: created_at, updated_at, started_at, finished_at, executed_at, completed_at, resolved_at, etc. No consistent pattern makes queries error-prone and refactoring difficult.",
+      "recommendation": "Standardize: created_at, updated_at, deleted_at, and action_specific {action}_at (e.g., sent_at, completed_at). Document in schema README. Use code generation for types."
+    },
+    {
+      "severity": "low",
+      "title": "Missing Indexes for Pagination Queries",
+      "file": "supabase/migrations/002_email_gesp.sql",
+      "line": 35,
+      "description": "email_inbound.received_at DESC index exists but pagination queries need (company_id, received_at DESC). Without compound index, offset-limit queries sort after filtering.",
+      "recommendation": "Add: CREATE INDEX idx_email_inbound_company_received ON email_inbound(company_id, received_at DESC);"
+    },
+    {
+      "severity": "low",
+      "title": "Overly Complex RLS Policy Logic",
+      "file": "supabase/migrations/20260403_email_threading_v2.sql",
+      "line": 150,
+      "description": "email_threads RLS policy checks EXISTS(SELECT FROM users WHERE role='admin'). Nested subquery in USING clause hard to reason about. Multiple policies with overlapping conditions.",
+      "recommendation": "Add is_admin BOOLEAN computed column. Rewrite policies to reference column directly. Document policy matrix in markdown. Test all role combinations."
+    }
+  ],
+  "score": 62,
+  "summary": "The VIGI PRO database layer demonstrates solid foundational structure with proper foreign keys, triggers, and views. However, critical security and data integrity issues identified include: (1) Hardcoded password seed visible in version control, (2) Potential SQL injection in JSONB computed columns, (3) Missing email uniqueness constraints in employees table, (4) Dual reference inconsistency in workflows (arrays + FKs), (5) service_role RLS bypass with zero audit logging. Performance concerns include N+1 patterns in compliance views, missing compound indexes, and unoptimized query paths. Redis cache layer has silent failure modes without proper logging or metrics. Schema shows organic growth across 28 tables and 13 migrations with normalization debt (JSONB blobs that should be columns, array columns that should be junctions). Strengths include comprehensive audit logging (immutable), proper soft-delete patterns for status fields, good use of CHECK constraints, and RLS policies on all sensitive tables. Critical Recommendation: Address security issues (remove hardcoded credentials, fix SQL injection vectors), normalize array columns to junction tables, implement proper error logging and metrics for cache layer, consolidate timestamp naming conventions, and add comprehensive integration tests for data integrity constraints."
+}

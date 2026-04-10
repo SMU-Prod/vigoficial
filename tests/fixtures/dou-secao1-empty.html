@@ -1,0 +1,356 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Diário Oficial da União - Seção 1 - {{DATE}}</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: 'Arial', 'Helvetica', sans-serif;
+            color: #333;
+            background: #f9f9f9;
+            line-height: 1.6;
+        }
+
+        .dou-container {
+            max-width: 900px;
+            margin: 0 auto;
+            background: white;
+            padding: 0;
+        }
+
+        .header-dou {
+            background: linear-gradient(135deg, #003d82 0%, #004da6 100%);
+            color: white;
+            padding: 30px 20px;
+            text-align: center;
+            border-bottom: 5px solid #ffc107;
+        }
+
+        .header-dou h1 {
+            font-size: 32px;
+            margin-bottom: 10px;
+            font-weight: bold;
+        }
+
+        .metadata {
+            display: flex;
+            justify-content: center;
+            gap: 40px;
+            margin-top: 15px;
+            font-size: 14px;
+            flex-wrap: wrap;
+        }
+
+        .metadata span {
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+        }
+
+        .metadata strong {
+            display: block;
+            font-size: 12px;
+            color: #ffc107;
+            margin-bottom: 3px;
+        }
+
+        nav.breadcrumb {
+            padding: 15px 20px;
+            background: #f0f0f0;
+            border-bottom: 1px solid #ddd;
+            font-size: 12px;
+        }
+
+        nav.breadcrumb a {
+            color: #003d82;
+            text-decoration: none;
+            margin: 0 5px;
+        }
+
+        nav.breadcrumb a:hover {
+            text-decoration: underline;
+        }
+
+        .content {
+            padding: 20px;
+        }
+
+        .materia {
+            margin-bottom: 30px;
+            padding: 20px;
+            border: 1px solid #ddd;
+            background: #ffffff;
+            page-break-inside: avoid;
+            border-left: 4px solid #003d82;
+        }
+
+        .materia:hover {
+            background: #f9f9f9;
+            box-shadow: 0 2px 8px rgba(0,0,0,0.1);
+        }
+
+        .orgao {
+            font-size: 13px;
+            font-weight: bold;
+            color: #003d82;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+            margin-bottom: 5px;
+        }
+
+        .secretaria {
+            font-size: 12px;
+            color: #666;
+            font-style: italic;
+            margin-bottom: 10px;
+        }
+
+        .titulo {
+            font-size: 16px;
+            font-weight: bold;
+            color: #1a1a1a;
+            margin: 12px 0;
+            line-height: 1.4;
+        }
+
+        .conteudo {
+            font-size: 13px;
+            color: #333;
+            line-height: 1.8;
+        }
+
+        .conteudo p {
+            margin: 8px 0;
+        }
+
+        .conteudo strong {
+            font-weight: bold;
+            color: #1a1a1a;
+        }
+
+        .campo-valor {
+            display: grid;
+            grid-template-columns: 200px 1fr;
+            gap: 15px;
+            margin: 8px 0;
+            padding: 5px 0;
+        }
+
+        .campo-nome {
+            font-weight: bold;
+            color: #003d82;
+        }
+
+        .campo-valor-texto {
+            color: #333;
+            word-break: break-word;
+        }
+
+        .referencia-legal {
+            font-size: 12px;
+            color: #666;
+            margin-top: 10px;
+            padding-top: 10px;
+            border-top: 1px solid #eee;
+            font-style: italic;
+        }
+
+        .footer {
+            background: #f0f0f0;
+            padding: 20px;
+            text-align: center;
+            font-size: 12px;
+            color: #666;
+            border-top: 1px solid #ddd;
+        }
+    </style>
+</head>
+<body>
+    <div class="dou-container">
+        <!-- Header -->
+        <div class="header-dou">
+            <h1>DIÁRIO OFICIAL DA UNIÃO</h1>
+            <div class="metadata">
+                <span>
+                    <strong>Publicado em:</strong>
+                    {{DATE}}
+                </span>
+                <span>
+                    <strong>Edição:</strong>
+                    0062
+                </span>
+                <span>
+                    <strong>Seção:</strong>
+                    {{SECTION}}
+                </span>
+                <span>
+                    <strong>Imprensa Nacional</strong>
+                </span>
+            </div>
+        </div>
+
+        <!-- Breadcrumb -->
+        <nav class="breadcrumb">
+            <a href="/">Início</a> / <a href="/servicos/diario-oficial">Diário Oficial</a> /
+            <a href="/servicos/diario-oficial/secao-1">Seção 1</a> / {{DATE}}
+        </nav>
+
+        <!-- Content -->
+        <div class="content">
+
+            <!-- ARTIGO 1: Ministério da Saúde -->
+            <article class="materia">
+                <div class="orgao">Ministério da Saúde</div>
+                <div class="secretaria">Secretaria de Atenção Especializada</div>
+                <div class="titulo">PORTARIA Nº 1.089/MS/2026 - CREDENCIAMENTO DE HOSPITAIS</div>
+                <div class="conteudo">
+                    <p>O Ministério da Saúde credencia hospitais para prestação de serviços na rede SUS:</p>
+                    <div class="campo-valor">
+                        <span class="campo-nome">Instituições Credenciadas:</span>
+                        <span class="campo-valor-texto">12 (doze) hospitais estaduais</span>
+                    </div>
+                    <div class="campo-valor">
+                        <span class="campo-nome">Data de Vigência:</span>
+                        <span class="campo-valor-texto">01 de abril de 2026</span>
+                    </div>
+                    <div class="campo-valor">
+                        <span class="campo-nome">Período de Validade:</span>
+                        <span class="campo-valor-texto">36 meses</span>
+                    </div>
+                    <div class="referencia-legal">Lei nº 8.080/90 | Decreto nº 7.508/2011</div>
+                </div>
+            </article>
+
+            <!-- ARTIGO 2: Ministério da Educação -->
+            <article class="materia">
+                <div class="orgao">Ministério da Educação</div>
+                <div class="secretaria">Secretaria de Educação Superior</div>
+                <div class="titulo">EDITAL DE SELEÇÃO Nº 2026/CAPES</div>
+                <div class="conteudo">
+                    <p>Abre-se processo seletivo para concessão de bolsas de pesquisa em nível de doutorado:</p>
+                    <div class="campo-valor">
+                        <span class="campo-nome">Número de Bolsas:</span>
+                        <span class="campo-valor-texto">250 (duzentas e cinquenta)</span>
+                    </div>
+                    <div class="campo-valor">
+                        <span class="campo-nome">Áreas de Conhecimento:</span>
+                        <span class="campo-valor-texto">Ciências Exatas, Humanas e Saúde</span>
+                    </div>
+                    <div class="campo-valor">
+                        <span class="campo-nome">Período de Inscrição:</span>
+                        <span class="campo-valor-texto">15 de abril a 15 de maio de 2026</span>
+                    </div>
+                    <div class="referencia-legal">Lei nº 9.394/96 | Portaria MEC nº 389/2013</div>
+                </div>
+            </article>
+
+            <!-- ARTIGO 3: Ministério da Defesa -->
+            <article class="materia">
+                <div class="orgao">Ministério da Defesa</div>
+                <div class="secretaria">Secretaria de Mobilização Civil</div>
+                <div class="titulo">PORTARIA Nº 234/MD/2026 - CONVOCAÇÃO DE RESERVISTAS</div>
+                <div class="conteudo">
+                    <p>Convoca-se reservistas para participação em exercício de mobilização nacional:</p>
+                    <div class="campo-valor">
+                        <span class="campo-nome">Quantitativo de Convocados:</span>
+                        <span class="campo-valor-texto">500 (quinhentos)</span>
+                    </div>
+                    <div class="campo-valor">
+                        <span class="campo-nome">Período de Participação:</span>
+                        <span class="campo-valor-texto">15 de maio a 30 de junho de 2026</span>
+                    </div>
+                    <div class="campo-valor">
+                        <span class="campo-nome">Locais de Concentração:</span>
+                        <span class="campo-valor-texto">Brasília, Rio de Janeiro, São Paulo e Recife</span>
+                    </div>
+                    <div class="referencia-legal">Lei nº 6.880/80 | Decreto nº 3.182/1999</div>
+                </div>
+            </article>
+
+            <!-- ARTIGO 4: IBAMA -->
+            <article class="materia">
+                <div class="orgao">Instituto Brasileiro do Meio Ambiente e dos Recursos Naturais Renováveis</div>
+                <div class="secretaria">Diretoria de Proteção Ambiental</div>
+                <div class="titulo">INSTRUÇÃO NORMATIVA Nº 45/IBAMA/2026</div>
+                <div class="conteudo">
+                    <p>Estabelece procedimentos para licenciamento de projetos de energia renovável:</p>
+                    <div class="campo-valor">
+                        <span class="campo-nome">Tipologias Abrangidas:</span>
+                        <span class="campo-valor-texto">Energia solar, energia eólica, energia hidrelétrica</span>
+                    </div>
+                    <div class="campo-valor">
+                        <span class="campo-nome">Prazo de Análise:</span>
+                        <span class="campo-valor-texto">180 dias para licenças simples</span>
+                    </div>
+                    <div class="campo-valor">
+                        <span class="campo-nome">Vigência:</span>
+                        <span class="campo-valor-texto">A partir da data de publicação</span>
+                    </div>
+                    <div class="referencia-legal">Lei nº 9.985/2000 | Resolução CONAMA nº 305/2002</div>
+                </div>
+            </article>
+
+            <!-- ARTIGO 5: Ministério do Trabalho -->
+            <article class="materia">
+                <div class="orgao">Ministério do Trabalho e Emprego</div>
+                <div class="secretaria">Secretaria de Inspeção do Trabalho</div>
+                <div class="titulo">PORTARIA Nº 567/MTE/2026 - NORMAS DE SEGURANÇA NO TRABALHO</div>
+                <div class="conteudo">
+                    <p>Atualiza as Normas Regulamentadoras de Segurança e Saúde no Trabalho:</p>
+                    <div class="campo-valor">
+                        <span class="campo-nome">Normas Atualizadas:</span>
+                        <span class="campo-valor-texto">NR-06, NR-10, NR-12</span>
+                    </div>
+                    <div class="campo-valor">
+                        <span class="campo-nome">Data de Vigência:</span>
+                        <span class="campo-valor-texto">01 de junho de 2026</span>
+                    </div>
+                    <div class="campo-valor">
+                        <span class="campo-nome">Obrigatoriedade de Cumprimento:</span>
+                        <span class="campo-valor-texto">Todos os empregadores e instituições públicas</span>
+                    </div>
+                    <div class="referencia-legal">Lei nº 8.213/91 | Decreto nº 3.048/1999</div>
+                </div>
+            </article>
+
+            <!-- ARTIGO 6: Agência Nacional de Transportes Terrestres -->
+            <article class="materia">
+                <div class="orgao">Agência Nacional de Transportes Terrestres</div>
+                <div class="secretaria">Superintendência de Exploração de Rodovias</div>
+                <div class="titulo">EDITAL Nº 2026/ANTT - CONCESSÃO DE RODOVIA FEDERAL</div>
+                <div class="conteudo">
+                    <p>Abre-se processo de concessão para exploração de rodovia federal:</p>
+                    <div class="campo-valor">
+                        <span class="campo-nome">Trecho Concedido:</span>
+                        <span class="campo-valor-texto">BR-116, segmento Rio de Janeiro - São Paulo (380 km)</span>
+                    </div>
+                    <div class="campo-valor">
+                        <span class="campo-nome">Período de Concessão:</span>
+                        <span class="campo-valor-texto">30 (trinta) anos</span>
+                    </div>
+                    <div class="campo-valor">
+                        <span class="campo-nome">Investimento Previsto:</span>
+                        <span class="campo-valor-texto">R$ 1.850.000.000,00</span>
+                    </div>
+                    <div class="referencia-legal">Lei nº 8.987/95 | Lei nº 9.074/95</div>
+                </div>
+            </article>
+
+        </div>
+
+        <!-- Footer -->
+        <div class="footer">
+            <p>Publicação Eletrônica do Diário Oficial da União</p>
+            <p>Imprensa Nacional - Ministério da Justiça e Segurança Pública</p>
+            <p>Brasília, DF - {{DATE}}</p>
+        </div>
+    </div>
+</body>
+</html>

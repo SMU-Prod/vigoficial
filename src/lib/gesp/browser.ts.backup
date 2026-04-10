@@ -1,0 +1,3633 @@
+import { firefox, type Browser, type BrowserContext, type Page } from "playwright";
+import { acquireGespLock, releaseGespLock } from "./lock";
+import { logger } from "@/lib/observability/logger"; // OPS-06: Structured logging
+import * as path from "path";
+import * as fs from "fs";
+import * as os from "os";
+
+// =============================================================================
+// VIGI — GESP Browser Automation
+// Baseado na documentação oficial da Polícia Federal:
+// https://www.gov.br/pf/pt-br/assuntos/seguranca-privada/sistemas/gesp
+//
+// FLUXO DE ACESSO GESP:
+// 1. Primeiro acesso: e-CNPJ obrigatório (certificado digital da empresa)
+// 2. Cadastra procuração eletrônica no GESP para procurador (pessoa física)
+// 3. Acessos seguintes: e-CPF do procurador (com procuração válida)
+// 4. Login via Login Único GOV.BR → opção "Seu Certificado Digital"
+// 5. Seleciona CNPJ da empresa (se procurador de múltiplas)
+//
+// NAVEGADOR COMPATÍVEL: Apenas Mozilla Firefox ESR
+// URL: https://www.gov.br/pf/pt-br/assuntos/seguranca-privada/sistemas → PGDWEB
+// Acesso direto: https://servicos.dpf.gov.br/gesp/
+//
+// TIPOS DE CERTIFICADO:
+// - e-CNPJ (A1 ou A3): Para primeiro acesso e cadastro de procuração
+// - e-CPF (A1 ou A3): Para procuradores com procuração cadastrada
+// - A1 = arquivo .pfx/.p12 importado no Firefox
+// - A3 = token USB/smartcard físico (não suportado em automação headless)
+//
+// IMPORTANTE: VIGI usa apenas certificados A1 (arquivo) para automação
+// =============================================================================
+
+const _GESP_PORTAL = "https://www.gov.br/pf/pt-br/assuntos/seguranca-privada/sistemas";
+const GESP_URL = "https://servicos.dpf.gov.br/gesp/";
+const _GOV_BR_LOGIN = "https://sso.acesso.gov.br";
+
+const _PF_SUPORTE_EMAILS = [
+  "dicof.cgcsp.dpa@pf.gov.br",
+  "dpsp.cgcsp.dpa@pf.gov.br",
+];
+
+function randomDelay(): number {
+  return 1500 + Math.random() * 2500;
+}
+
+async function delay(ms?: number) {
+  return new Promise((r) => setTimeout(r, ms || randomDelay()));
+}
+
+type CertificadoTipo = "e-CNPJ" | "e-CPF";
+
+interface CertificadoConfig {
+  tipo: CertificadoTipo;
+  r2Path: string;
+  senha: string;
+  cnpjEmpresa: string;
+  cpfProcurador?: string;
+}
+
+interface ProcessoResult {
+  sucesso: boolean;
+  protocolo?: string | null;
+  turmaId?: string | null;
+  guiaId?: string | null;
+  numeroGuia?: string | null;
+  gruLinhaDigitavel?: string | null;
+  registrosProcessados?: number;
+  alunosImportados?: number;
+  mensagem?: string;
+  erros?: string[];
+  printAntes?: Buffer;
+  printDepois?: Buffer;
+  printScreen?: Buffer;
+  pendencias?: string[];
+}
+
+interface TabelaRow {
+  [key: string]: string;
+}
+
+/**
+ * Gerencia sessões do navegador Firefox ESR para GESP
+ *
+ * PRD Regra R5: Máx. 1 sessão por empresa, 3 browsers no servidor
+ */
+export class GespBrowser {
+  private browser: Browser | null = null;
+  private context: BrowserContext | null = null;
+  private page: Page | null = null;
+  private companyId: string;
+  private sessionId: string | null = null;
+  private tempProfileDir: string | null = null;
+
+  constructor(companyId: string) {
+    this.companyId = companyId;
+  }
+
+  // =========================================================================
+  // ABERTURA DO BROWSER
+  // =========================================================================
+
+  /**
+   * Abre Firefox ESR com certificado digital importado
+   *
+   * @param certificado - Configuração do certificado digital
+   * @param pfxBuffer - Buffer do arquivo .pfx já baixado do R2
+   */
+  async open(certificado: CertificadoConfig, pfxBuffer: Buffer): Promise<void> {
+    const lockResult = await acquireGespLock(this.companyId);
+    if (!lockResult.acquired) {
+      throw new Error(`Falha ao adquirir lock GESP: ${lockResult.reason}`);
+    }
+    this.sessionId = lockResult.sessionId || null;
+
+    try {
+      this.tempProfileDir = await this.createFirefoxProfile(pfxBuffer, certificado.senha);
+
+      this.browser = await firefox.launch({
+        headless: true,
+        firefoxUserPrefs: {
+          "security.default_personal_cert": "Select Automatically",
+          "security.enterprise_roots.enabled": true,
+          "security.remember_cert_checkbox_default_setting": true,
+          "security.osclientcerts.autoload": true,
+        },
+        args: [
+          `-profile`, this.tempProfileDir,
+        ],
+      });
+
+      this.context = await this.browser.newContext({
+        ignoreHTTPSErrors: true,
+        viewport: { width: 1366, height: 768 },
+        locale: "pt-BR",
+        timezoneId: "America/Sao_Paulo",
+        userAgent: "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:115.0) Gecko/20100101 Firefox/115.0",
+      });
+
+      this.page = await this.context.newPage();
+      this.page.setDefaultTimeout(60_000);
+
+    } catch (err) {
+      if (this.sessionId) {
+        await releaseGespLock(this.sessionId);
+      }
+      this.cleanupTempProfile();
+      throw err;
+    }
+  }
+
+  // =========================================================================
+  // LOGIN
+  // =========================================================================
+
+  /**
+   * Executa login no GESP via Login Único GOV.BR
+   *
+   * @param cnpjEmpresa - CNPJ para selecionar (quando procurador de múltiplas empresas)
+   */
+  async login(cnpjEmpresa: string): Promise<boolean> {
+    if (!this.page) throw new Error("Browser não iniciado. Chame open() primeiro.");
+
+    try {
+      await this.page.goto(GESP_URL, { waitUntil: "networkidle", timeout: 45_000 });
+      await delay();
+
+      const currentUrl = this.page.url();
+
+      if (currentUrl.includes("acesso.gov.br") || currentUrl.includes("sso.")) {
+
+        const certButton = await this.page.$(
+          'button:has-text("Certificado Digital"), ' +
+          'a:has-text("Certificado Digital"), ' +
+          'button:has-text("Seu Certificado")'
+        );
+
+        if (certButton) {
+          await certButton.click();
+          await delay();
+        }
+
+        await this.page.waitForURL(
+          (url) => url.href.includes("dpf.gov.br") || url.href.includes("gesp"),
+          { timeout: 30_000 }
+        );
+        await delay();
+      }
+
+      // Trata seleção de empresa (if procurator de múltiplas)
+      const cnpjSelector = await this.page.$(
+        'select:has(option), [name*="cnpj"], #cnpj, input[placeholder*="CNPJ"]'
+      );
+
+      if (cnpjSelector) {
+
+        const tagName = await cnpjSelector.evaluate((el: Element) => el.tagName.toLowerCase());
+        if (tagName === "select") {
+          const cnpjRaiz = cnpjEmpresa.replace(/\D/g, "").substring(0, 8);
+          const options = await cnpjSelector.$$eval('option', (opts: HTMLOptionElement[]) =>
+            opts.map((o) => ({ value: o.value, text: o.textContent || "" }))
+          );
+          const match = options.find((o) => o.text.includes(cnpjRaiz));
+          if (match) {
+            await cnpjSelector.selectOption(match.value);
+          }
+        } else {
+          await cnpjSelector.fill(cnpjEmpresa.replace(/\D/g, ""));
+        }
+        await delay(800);
+
+        const acessarBtn = await this.page.$(
+          'button:has-text("Acessar"), input[value*="Acessar"], button[type="submit"]'
+        );
+        if (acessarBtn) {
+          await acessarBtn.click();
+          await this.page.waitForLoadState("networkidle");
+          await delay();
+        }
+      }
+
+      const isLoggedIn = await this.verifyLoggedIn();
+      if (isLoggedIn) {
+        await this.screenshot("login-sucesso");
+        return true;
+      }
+
+      const _diagScreenshot = await this.screenshot("login-falhou");
+      logger.error("Login falhou. Screenshot salvo para diagnóstico.", { url: this.page.url() }); // OPS-06
+      return false;
+    } catch (err) {
+      logger.error("Erro durante login", err as Error); // OPS-06
+      return false;
+    }
+  }
+
+  /**
+   * Verifica se estamos logados no painel principal do GESP
+   */
+  private async verifyLoggedIn(): Promise<boolean> {
+    if (!this.page) return false;
+
+    try {
+      await this.page.waitForLoadState("networkidle");
+      const hasMenu = await this.page.$('text="Empresa", text="Processo Autorizativo", text="Processo Punitivo"');
+      const hasUserInfo = await this.page.$('.user-info, [class*="usuario"], [class*="perfil"]');
+      return hasMenu !== null || hasUserInfo !== null;
+    } catch {
+      return false;
+    }
+  }
+
+  // =========================================================================
+  // NAVEGAÇÃO DE MENUS
+  // =========================================================================
+
+  /**
+   * Navega em menu dropdown do GESP
+   * Padrão: clica menu principal, depois sub-item
+   */
+  private async navigateMenu(menuText: string, subItemText: string): Promise<void> {
+    if (!this.page) throw new Error("Página não inicializada");
+
+    try {
+      // Clica no menu principal
+      const menuBtn = await this.page.$(`text="${menuText}"`);
+      if (menuBtn) {
+        await menuBtn.click();
+        await delay(300);
+      }
+
+      // Clica no sub-item
+      const subBtn = await this.page.$(`text="${subItemText}"`);
+      if (subBtn) {
+        await subBtn.click();
+        await this.page.waitForLoadState("networkidle");
+        await delay();
+      }
+    } catch (err) {
+      logger.error("Erro ao navegar menu", { menuText, subItemText, error: err as Error }); // OPS-06
+      throw err;
+    }
+  }
+
+  /**
+   * Preenche campo de formulário por rótulo (label text)
+   */
+  private async fillFormField(labelText: string, value: string): Promise<void> {
+    if (!this.page) throw new Error("Página não inicializada");
+
+    try {
+      const input = await this.page.locator(`label:has-text("${labelText}") >> .. >> input, label:has-text("${labelText}") >> .. >> textarea`).first();
+      if (input) {
+        await input.fill(value);
+      }
+    } catch (err) {
+      logger.error("Erro ao preencher campo", { labelText, error: err as Error }); // OPS-06
+    }
+  }
+
+  /**
+   * Seleciona opção em dropdown por label
+   */
+  private async selectDropdown(labelText: string, optionText: string): Promise<void> {
+    if (!this.page) throw new Error("Página não inicializada");
+
+    try {
+      const select = await this.page.locator(`label:has-text("${labelText}") >> .. >> select`).first();
+      if (select) {
+        await select.selectOption({ label: optionText });
+      }
+    } catch (err) {
+      logger.error("Erro ao selecionar dropdown", { labelText, error: err as Error }); // OPS-06
+    }
+  }
+
+  /**
+   * Clica em aba do formulário (painel esquerdo)
+   */
+  private async clickTab(tabName: string): Promise<void> {
+    if (!this.page) throw new Error("Página não inicializada");
+
+    try {
+      const tab = await this.page.$(`text="${tabName}"`);
+      if (tab) {
+        await tab.click();
+        await this.page.waitForLoadState("networkidle");
+        await delay();
+      }
+    } catch (err) {
+      logger.error("Erro ao clicar aba", { tabName, error: err as Error }); // OPS-06
+    }
+  }
+
+  /**
+   * Faz upload de arquivo em formulário JSF
+   */
+  private async uploadFile(buffer: Buffer, filename: string, inputSelector: string): Promise<void> {
+    if (!this.page) throw new Error("Página não inicializada");
+
+    try {
+      const tmpPath = path.join(os.tmpdir(), filename);
+      fs.writeFileSync(tmpPath, buffer);
+
+      const input = await this.page.$(inputSelector);
+      if (input) {
+        await input.setInputFiles(tmpPath);
+        await delay();
+      }
+
+      fs.unlinkSync(tmpPath);
+    } catch (err) {
+      logger.error("Erro ao fazer upload de arquivo", err as Error); // OPS-06
+      throw err;
+    }
+  }
+
+  /**
+   * Extrai dados de tabela HTML
+   */
+  private async parseTable(selector: string = "table"): Promise<TabelaRow[]> {
+    if (!this.page) return [];
+
+    try {
+      const rows = await this.page.locator(`${selector} tbody tr`).all();
+      const result: TabelaRow[] = [];
+
+      for (const row of rows) {
+        const cells = await row.locator("td").allTextContents();
+        if (cells.length > 0) {
+          result.push({
+            colunas: cells.join(" | "),
+          });
+        }
+      }
+
+      return result;
+    } catch {
+      return [];
+    }
+  }
+
+  /**
+   * Aguarda carregamento de página GESP
+   */
+  private async waitForGespPage(): Promise<void> {
+    if (!this.page) throw new Error("Página não inicializada");
+
+    try {
+      await this.page.waitForLoadState("networkidle");
+      await delay();
+    } catch {
+      logger.warn("Timeout esperando carregamento de página"); // OPS-06
+    }
+  }
+
+  /**
+   * Trata dialog de confirmação do GESP
+   * Padrão: "Confirma [ação]?" → Sim / Não
+   */
+  private async handleGespConfirmation(): Promise<string | null> {
+    if (!this.page) return null;
+
+    try {
+      const simBtn = await this.page.$('button:has-text("Sim"), input[value="Sim"]');
+      if (simBtn) {
+        await simBtn.click();
+        await this.page.waitForLoadState("networkidle");
+        await delay();
+
+        const successMsg = await this.page.$('.message, .alert-success, .msg-sucesso, .info-message');
+        if (successMsg) {
+          const text = (await successMsg.textContent())?.trim() || "";
+          const match = text.match(/N[ºo°]\s*(?:Processo|Protocolo)[:.]?\s*(\d{4}\/\d+)/i);
+          if (match) return match[1];
+          return text;
+        }
+      }
+    } catch {
+      // Dialog pode não ter aparecido
+    }
+
+    return null;
+  }
+
+  /**
+   * Clica em botão de ação universal: EXCLUIR | VERIFICAR | ENVIAR
+   */
+  private async clickGespActionButton(action: "EXCLUIR" | "VERIFICAR" | "ENVIAR"): Promise<string | null> {
+    if (!this.page) return null;
+
+    try {
+      await this.page.click(`button:has-text("${action}"), input[value="${action}"], a:has-text("${action}")`);
+      await this.page.waitForLoadState("networkidle");
+      await delay();
+
+      return await this.handleGespConfirmation();
+    } catch (err) {
+      logger.error(`Erro ao clicar ${action}`, err as Error); // OPS-06
+      return null;
+    }
+  }
+
+  /**
+   * Captura screenshot de diagnóstico
+   */
+  async screenshot(label: string): Promise<Buffer> {
+    if (!this.page) return Buffer.alloc(0);
+
+    try {
+      const buffer = await this.page.screenshot({ fullPage: true });
+      const timestamp = new Date().toISOString().replace(/[:.]/g, "-");
+      const filename = `${label}-${timestamp}.png`;
+      const filepath = path.join(os.tmpdir(), filename);
+      fs.writeFileSync(filepath, buffer);
+      return buffer;
+    } catch (err) {
+      console.error("[GESP] Erro ao capturar screenshot:", err);
+      return Buffer.alloc(0);
+    }
+  }
+
+  // =========================================================================
+  // MÓDULO EMPRESA — Atualizar Dados
+  // =========================================================================
+
+  /**
+   * Menu: Empresa > Atualizar Dados
+   * Formulário com 3 abas: Identificação, Endereço, Dados da Autorização
+   */
+  async atualizarDadosEmpresa(dados: {
+    nomFantasia?: string;
+    email?: string;
+    telefone?: string;
+    celular?: string;
+    fax?: string;
+    logradouro?: string;
+    numero?: string;
+    complemento?: string;
+    bairro?: string;
+    uf?: string;
+    municipio?: string;
+    cep?: string;
+  }): Promise<ProcessoResult> {
+    if (!this.page) return { sucesso: false, erros: ["Página não inicializada"] };
+
+    try {
+      await this.screenshot("atualizar-dados-inicio");
+      await this.navigateMenu("Empresa", "Atualizar Dados");
+
+      // Tab: Identificação
+      await this.clickTab("Identificação");
+      if (dados.nomFantasia) await this.fillFormField("Nome Fantasia", dados.nomFantasia);
+      if (dados.email) await this.fillFormField("E-mail", dados.email);
+      if (dados.telefone) await this.fillFormField("Telefone", dados.telefone);
+      if (dados.celular) await this.fillFormField("Celular", dados.celular);
+      if (dados.fax) await this.fillFormField("Fax", dados.fax);
+
+      let saveBtn = await this.page.$('button:has-text("Salvar"), input[value="Salvar"]');
+      if (saveBtn) await saveBtn.click();
+      await this.page.waitForLoadState("networkidle");
+      await delay();
+
+      // Tab: Endereço
+      await this.clickTab("Endereço");
+      if (dados.logradouro) await this.fillFormField("Logradouro", dados.logradouro);
+      if (dados.numero) await this.fillFormField("Número", dados.numero);
+      if (dados.complemento) await this.fillFormField("Complemento", dados.complemento);
+      if (dados.bairro) await this.fillFormField("Bairro", dados.bairro);
+      if (dados.uf) await this.selectDropdown("UF", dados.uf);
+      if (dados.municipio) await this.selectDropdown("Município", dados.municipio);
+      if (dados.cep) await this.fillFormField("CEP", dados.cep);
+
+      saveBtn = await this.page.$('button:has-text("Salvar"), input[value="Salvar"]');
+      if (saveBtn) await saveBtn.click();
+      await this.page.waitForLoadState("networkidle");
+
+      await this.screenshot("atualizar-dados-fim");
+      return { sucesso: true };
+    } catch (err) {
+      console.error("[GESP] Erro ao atualizar dados empresa:", err);
+      return { sucesso: false, erros: [`${err}`] };
+    }
+  }
+
+  // =========================================================================
+  // MÓDULO EMPRESA — Gerenciar Procuradores
+  // =========================================================================
+
+  /**
+   * Menu: Empresa > Gerenciar Procuradores
+   */
+  async gerenciarProcuradores(acao: "incluir" | "listar", dados?: {
+    cpf?: string;
+    nome?: string;
+    dataInicio?: string;
+    dataFim?: string;
+  }): Promise<ProcessoResult> {
+    if (!this.page) return { sucesso: false, erros: ["Página não inicializada"] };
+
+    try {
+      await this.screenshot("procuradores-inicio");
+      await this.navigateMenu("Empresa", "Gerenciar Procuradores");
+      await this.waitForGespPage();
+
+      if (acao === "listar") {
+        const tabela = await this.parseTable('table');
+        return {
+          sucesso: true,
+          mensagem: `${tabela.length} procuradores encontrados`,
+        };
+      }
+
+      if (acao === "incluir" && dados) {
+        const incluirBtn = await this.page.$('button:has-text("Incluir Procurador")');
+        if (incluirBtn) {
+          await incluirBtn.click();
+          await this.page.waitForLoadState("networkidle");
+          await delay();
+        }
+
+        if (dados.cpf) {
+          const cpfInput = await this.page.$('input[name*="cpf"]');
+          if (cpfInput) {
+            await cpfInput.fill(dados.cpf.replace(/\D/g, ""));
+            await delay();
+
+            const buscarBtn = await this.page.$('button:has-text("Buscar")');
+            if (buscarBtn) {
+              await buscarBtn.click();
+              await this.page.waitForLoadState("networkidle");
+              await delay();
+            }
+          }
+        }
+
+        if (dados.dataInicio) await this.fillFormField("Data Início", dados.dataInicio);
+        if (dados.dataFim) await this.fillFormField("Data Fim", dados.dataFim);
+
+        const salvarBtn = await this.page.$('button:has-text("Salvar"), input[value="Salvar"]');
+        if (salvarBtn) {
+          await salvarBtn.click();
+          await this.page.waitForLoadState("networkidle");
+          await delay();
+        }
+      }
+
+      await this.screenshot("procuradores-fim");
+      return { sucesso: true };
+    } catch (err) {
+      console.error("[GESP] Erro ao gerenciar procuradores:", err);
+      return { sucesso: false, erros: [`${err}`] };
+    }
+  }
+
+  // =========================================================================
+  // MÓDULO EMPRESA — Consultar GRU
+  // =========================================================================
+
+  /**
+   * Menu: Empresa > Consultar GRU
+   */
+  async consultarGru(linhaDigitavel: string): Promise<ProcessoResult> {
+    if (!this.page) return { sucesso: false, erros: ["Página não inicializada"] };
+
+    try {
+      await this.screenshot("consultar-gru-inicio");
+      await this.navigateMenu("Empresa", "Consultar GRU");
+      await this.waitForGespPage();
+
+      const linhaInput = await this.page.$('input[name*="linha"], [placeholder*="Linha Digitável"]');
+      if (linhaInput) {
+        await linhaInput.fill(linhaDigitavel);
+        await delay();
+      }
+
+      const consultarBtn = await this.page.$('button:has-text("CONSULTAR"), input[value="CONSULTAR"]');
+      if (consultarBtn) {
+        await consultarBtn.click();
+        await this.page.waitForLoadState("networkidle");
+        await delay();
+      }
+
+      const saldoInfo = await this.page.$('.saldo-info, .balance, [class*="saldo"]');
+      let saldo = "";
+      if (saldoInfo) {
+        saldo = (await saldoInfo.textContent())?.trim() || "";
+      }
+
+      await this.screenshot("consultar-gru-fim");
+      return { sucesso: true, mensagem: saldo };
+    } catch (err) {
+      console.error("[GESP] Erro ao consultar GRU:", err);
+      return { sucesso: false, erros: [`${err}`] };
+    }
+  }
+
+  // =========================================================================
+  // MÓDULO PROCESSO AUTORIZATIVO
+  // =========================================================================
+
+  /**
+   * Menu: Processo Autorizativo > Acompanhar
+   */
+  async acompanharProcessosAutorizativos(filtros?: {
+    ano?: string;
+    numero?: string;
+    tipo?: string;
+    situacao?: string;
+  }): Promise<ProcessoResult> {
+    if (!this.page) return { sucesso: false, erros: ["Página não inicializada"] };
+
+    try {
+      await this.screenshot("acompanhar-auth-inicio");
+      await this.navigateMenu("Processo Autorizativo", "Acompanhar");
+      await this.waitForGespPage();
+
+      if (filtros?.ano) await this.fillFormField("Ano", filtros.ano);
+      if (filtros?.numero) await this.fillFormField("Número Processo", filtros.numero);
+      if (filtros?.tipo) await this.selectDropdown("Tipo Processo", filtros.tipo);
+      if (filtros?.situacao) await this.selectDropdown("Situação Processo", filtros.situacao);
+
+      const pesquisarBtn = await this.page.$('button:has-text("Pesquisar"), input[value="Pesquisar"]');
+      if (pesquisarBtn) {
+        await pesquisarBtn.click();
+        await this.page.waitForLoadState("networkidle");
+        await delay();
+      }
+
+      const tabela = await this.parseTable('table');
+      await this.screenshot("acompanhar-auth-fim");
+
+      return {
+        sucesso: true,
+        mensagem: `${tabela.length} processos encontrados`,
+      };
+    } catch (err) {
+      console.error("[GESP] Erro ao acompanhar processos autorizativos:", err);
+      return { sucesso: false, erros: [`${err}`] };
+    }
+  }
+
+  /**
+   * Menu: Processo Autorizativo > Solicitar Autorização de Funcionamento
+   */
+  async solicitarAutorizacaoFuncionamento(dados: {
+    gruLinhaDigitavel?: string;
+    arquivos?: Array<{ buffer: Buffer; nome: string }>;
+  }): Promise<ProcessoResult> {
+    if (!this.page) return { sucesso: false, erros: ["Página não inicializada"] };
+
+    try {
+      await this.screenshot("solicitar-auth-func-inicio");
+      await this.navigateMenu("Processo Autorizativo", "Solicitar Autorização de Funcionamento");
+      await this.waitForGespPage();
+
+      // Tab: Guias de Recolhimento
+      await this.clickTab("Guias de Recolhimento");
+      if (dados.gruLinhaDigitavel) {
+        await this.fillFormField("Linha Digitável", dados.gruLinhaDigitavel);
+        const salvarBtn = await this.page.$('button:has-text("Salvar"), input[value="Salvar"]');
+        if (salvarBtn) {
+          await salvarBtn.click();
+          await this.page.waitForLoadState("networkidle");
+          await delay();
+        }
+      }
+
+      // Tab: Documentos
+      await this.clickTab("Documentos");
+      if (dados.arquivos && dados.arquivos.length > 0) {
+        const fileInput = await this.page.$('input[type="file"]');
+        if (fileInput) {
+          for (const arquivo of dados.arquivos) {
+            const tmpPath = path.join(os.tmpdir(), arquivo.nome);
+            fs.writeFileSync(tmpPath, arquivo.buffer);
+            await fileInput.setInputFiles(tmpPath);
+            await delay(500);
+            fs.unlinkSync(tmpPath);
+          }
+        }
+      }
+
+      // Envia processo
+      const protocolo = await this.clickGespActionButton("ENVIAR");
+
+      await this.screenshot("solicitar-auth-func-fim");
+      return {
+        sucesso: !!protocolo,
+        protocolo,
+        mensagem: protocolo ? `Processo enviado: ${protocolo}` : "Falha ao enviar",
+      };
+    } catch (err) {
+      console.error("[GESP] Erro ao solicitar autorização de funcionamento:", err);
+      return { sucesso: false, erros: [`${err}`] };
+    }
+  }
+
+  /**
+   * Menu: Processo Autorizativo > Solicitar Aquisição de Armas e Munições
+   */
+  async solicitarAquisicaoArmas(dados: {
+    tipo?: string;
+    gruLinhaDigitavel?: string;
+    arquivos?: Array<{ buffer: Buffer; nome: string }>;
+  }): Promise<ProcessoResult> {
+    if (!this.page) return { sucesso: false, erros: ["Página não inicializada"] };
+
+    try {
+      await this.screenshot("solicitar-armas-inicio");
+      await this.navigateMenu("Processo Autorizativo", "Solicitar Aquisição de Armas e Munições");
+      await this.waitForGespPage();
+
+      if (dados.tipo) {
+        await this.selectDropdown("Tipo de Aquisição", dados.tipo);
+      }
+
+      await this.clickTab("Guias de Recolhimento");
+      if (dados.gruLinhaDigitavel) {
+        await this.fillFormField("Linha Digitável", dados.gruLinhaDigitavel);
+        const salvarBtn = await this.page.$('button:has-text("Salvar"), input[value="Salvar"]');
+        if (salvarBtn) {
+          await salvarBtn.click();
+          await this.page.waitForLoadState("networkidle");
+          await delay();
+        }
+      }
+
+      const protocolo = await this.clickGespActionButton("ENVIAR");
+
+      await this.screenshot("solicitar-armas-fim");
+      return {
+        sucesso: !!protocolo,
+        protocolo,
+        mensagem: protocolo ? `Processo enviado: ${protocolo}` : "Falha ao enviar",
+      };
+    } catch (err) {
+      console.error("[GESP] Erro ao solicitar aquisição de armas:", err);
+      return { sucesso: false, erros: [`${err}`] };
+    }
+  }
+
+  /**
+   * Menu: Processo Autorizativo > Solicitar Autorização de Nova Atividade
+   */
+  async solicitarNovaAtividade(dados: {
+    atividades?: string[];
+    gruLinhaDigitavel?: string;
+  }): Promise<ProcessoResult> {
+    if (!this.page) return { sucesso: false, erros: ["Página não inicializada"] };
+
+    try {
+      await this.screenshot("solicitar-nova-atividade-inicio");
+      await this.navigateMenu("Processo Autorizativo", "Solicitar Autorização de Nova Atividade");
+      await this.waitForGespPage();
+
+      // Marca checkboxes de atividades
+      if (dados.atividades && dados.atividades.length > 0) {
+        for (const atividade of dados.atividades) {
+          const checkbox = await this.page.$(`input[type="checkbox"][value="${atividade}"], label:has-text("${atividade}") >> .. >> input[type="checkbox"]`);
+          if (checkbox) {
+            await checkbox.check();
+          }
+        }
+        await delay();
+      }
+
+      await this.clickTab("Guias de Recolhimento");
+      if (dados.gruLinhaDigitavel) {
+        await this.fillFormField("Linha Digitável", dados.gruLinhaDigitavel);
+      }
+
+      const protocolo = await this.clickGespActionButton("ENVIAR");
+
+      await this.screenshot("solicitar-nova-atividade-fim");
+      return {
+        sucesso: !!protocolo,
+        protocolo,
+        mensagem: protocolo ? `Processo enviado: ${protocolo}` : "Falha ao enviar",
+      };
+    } catch (err) {
+      console.error("[GESP] Erro ao solicitar nova atividade:", err);
+      return { sucesso: false, erros: [`${err}`] };
+    }
+  }
+
+  /**
+   * Menu: Processo Autorizativo > Editar Rascunhos
+   */
+  async editarRascunhosAutorizativos(numeroProcesso: string): Promise<ProcessoResult> {
+    if (!this.page) return { sucesso: false, erros: ["Página não inicializada"] };
+
+    try {
+      await this.screenshot("editar-rascunho-auth-inicio");
+      await this.navigateMenu("Processo Autorizativo", "Editar Rascunhos");
+      await this.waitForGespPage();
+
+      const linhaProcesso = await this.page.$(`text="${numeroProcesso}"`);
+      if (linhaProcesso) {
+        await linhaProcesso.click();
+        await this.page.waitForLoadState("networkidle");
+        await delay();
+      }
+
+      await this.screenshot("editar-rascunho-auth-fim");
+      return { sucesso: true, mensagem: "Rascunho carregado" };
+    } catch (err) {
+      console.error("[GESP] Erro ao editar rascunhos autorizativos:", err);
+      return { sucesso: false, erros: [`${err}`] };
+    }
+  }
+
+  /**
+   * Menu: Processo Autorizativo > Responder Notificação
+   */
+  async responderNotificacaoAutorizativa(numeroNotificacao: string, resposta: {
+    texto?: string;
+    arquivos?: Array<{ buffer: Buffer; nome: string }>;
+  }): Promise<ProcessoResult> {
+    if (!this.page) return { sucesso: false, erros: ["Página não inicializada"] };
+
+    try {
+      await this.screenshot("responder-notif-auth-inicio");
+      await this.navigateMenu("Processo Autorizativo", "Responder Notificação");
+      await this.waitForGespPage();
+
+      const notificacaoRow = await this.page.$(`text="${numeroNotificacao}"`);
+      if (notificacaoRow) {
+        await notificacaoRow.click();
+        await this.page.waitForLoadState("networkidle");
+        await delay();
+      }
+
+      if (resposta.texto) {
+        const textareaInput = await this.page.$('textarea');
+        if (textareaInput) {
+          await textareaInput.fill(resposta.texto);
+        }
+      }
+
+      const protocolo = await this.clickGespActionButton("ENVIAR");
+
+      await this.screenshot("responder-notif-auth-fim");
+      return {
+        sucesso: !!protocolo,
+        protocolo,
+        mensagem: protocolo ? `Resposta enviada: ${protocolo}` : "Falha ao enviar",
+      };
+    } catch (err) {
+      console.error("[GESP] Erro ao responder notificação autorizativa:", err);
+      return { sucesso: false, erros: [`${err}`] };
+    }
+  }
+
+  /**
+   * Menu: Processo Autorizativo > Interpor Recurso
+   */
+  async interporRecursoAutorizativo(numeroProcesso: string, recurso: {
+    fundamentacao?: string;
+    arquivos?: Array<{ buffer: Buffer; nome: string }>;
+  }): Promise<ProcessoResult> {
+    if (!this.page) return { sucesso: false, erros: ["Página não inicializada"] };
+
+    try {
+      await this.screenshot("interpor-recurso-auth-inicio");
+      await this.navigateMenu("Processo Autorizativo", "Interpor Recurso");
+      await this.waitForGespPage();
+
+      const processoRow = await this.page.$(`text="${numeroProcesso}"`);
+      if (processoRow) {
+        await processoRow.click();
+        await this.page.waitForLoadState("networkidle");
+        await delay();
+      }
+
+      if (recurso.fundamentacao) {
+        const textareaInput = await this.page.$('textarea');
+        if (textareaInput) {
+          await textareaInput.fill(recurso.fundamentacao);
+        }
+      }
+
+      const protocolo = await this.clickGespActionButton("ENVIAR");
+
+      await this.screenshot("interpor-recurso-auth-fim");
+      return {
+        sucesso: !!protocolo,
+        protocolo,
+        mensagem: protocolo ? `Recurso interposto: ${protocolo}` : "Falha ao enviar",
+      };
+    } catch (err) {
+      console.error("[GESP] Erro ao interpor recurso autorizativo:", err);
+      return { sucesso: false, erros: [`${err}`] };
+    }
+  }
+
+  // =========================================================================
+  // MÓDULO TURMA
+  // =========================================================================
+
+  /**
+   * Menu: Turma > Acompanhar
+   */
+  async acompanharTurmas(filtros?: {
+    ano?: string;
+    numero?: string;
+    situacao?: string;
+  }): Promise<ProcessoResult> {
+    if (!this.page) return { sucesso: false, erros: ["Página não inicializada"] };
+
+    try {
+      await this.screenshot("acompanhar-turma-inicio");
+      await this.navigateMenu("Turma", "Acompanhar");
+      await this.waitForGespPage();
+
+      if (filtros?.ano) await this.fillFormField("Ano", filtros.ano);
+      if (filtros?.numero) await this.fillFormField("Número", filtros.numero);
+      if (filtros?.situacao) await this.selectDropdown("Situação", filtros.situacao);
+
+      const pesquisarBtn = await this.page.$('button:has-text("Pesquisar"), input[value="Pesquisar"]');
+      if (pesquisarBtn) {
+        await pesquisarBtn.click();
+        await this.page.waitForLoadState("networkidle");
+        await delay();
+      }
+
+      const tabela = await this.parseTable('table');
+      await this.screenshot("acompanhar-turma-fim");
+
+      return {
+        sucesso: true,
+        mensagem: `${tabela.length} turmas encontradas`,
+      };
+    } catch (err) {
+      console.error("[GESP] Erro ao acompanhar turmas:", err);
+      return { sucesso: false, erros: [`${err}`] };
+    }
+  }
+
+  /**
+   * Menu: Turma > Cadastrar Turma
+   */
+  async cadastrarTurma(dados: {
+    tipoCurso: "Formação" | "Reciclagem" | "Extensão";
+    gruLinhaDigitavel?: string;
+    permitirExcedentes?: boolean;
+  }): Promise<ProcessoResult> {
+    if (!this.page) return { sucesso: false, erros: ["Página não inicializada"] };
+
+    try {
+      await this.screenshot("cadastrar-turma-inicio");
+      await this.navigateMenu("Turma", "Cadastrar Turma");
+      await this.waitForGespPage();
+
+      // Tab: Dados Básicos
+      await this.clickTab("Dados Básicos");
+      await this.selectDropdown("Tipo de Curso", dados.tipoCurso);
+      await delay();
+
+      // Tab: Guias de Recolhimento
+      await this.clickTab("Guias de Recolhimento");
+      if (dados.gruLinhaDigitavel) {
+        await this.fillFormField("Linha Digitável", dados.gruLinhaDigitavel);
+        const salvarBtn = await this.page.$('button:has-text("Salvar"), input[value="Salvar"]');
+        if (salvarBtn) {
+          await salvarBtn.click();
+          await this.page.waitForLoadState("networkidle");
+          await delay();
+        }
+      }
+
+      // Tab: Alunos - Configurar limite
+      await this.clickTab("Alunos");
+      if (dados.permitirExcedentes) {
+        const checkbox = await this.page.$('input[type="checkbox"][name*="excedente"], label:has-text("Permitir Excedentes") >> .. >> input');
+        if (checkbox) {
+          await checkbox.check();
+        }
+      }
+
+      const protocolo = await this.clickGespActionButton("ENVIAR");
+
+      await this.screenshot("cadastrar-turma-fim");
+      return {
+        sucesso: !!protocolo,
+        protocolo,
+        mensagem: protocolo ? `Turma criada: ${protocolo}` : "Falha ao criar turma",
+      };
+    } catch (err) {
+      console.error("[GESP] Erro ao cadastrar turma:", err);
+      return { sucesso: false, erros: [`${err}`] };
+    }
+  }
+
+  /**
+   * Menu: Turma > Comunicar Início
+   */
+  async comunicarInicioTurma(turmaId: string): Promise<ProcessoResult> {
+    if (!this.page) return { sucesso: false, erros: ["Página não inicializada"] };
+
+    try {
+      await this.screenshot("comunicar-inicio-turma-inicio");
+      await this.navigateMenu("Turma", "Acompanhar");
+      await this.waitForGespPage();
+
+      const turmaRow = await this.page.$(`text="${turmaId}"`);
+      if (turmaRow) {
+        await turmaRow.click();
+        await this.page.waitForLoadState("networkidle");
+        await delay();
+      }
+
+      const inicioBtn = await this.page.$('button:has-text("Comunicar Início")');
+      if (inicioBtn) {
+        await inicioBtn.click();
+        await this.page.waitForLoadState("networkidle");
+        await delay();
+      }
+
+      const protocolo = await this.handleGespConfirmation();
+
+      await this.screenshot("comunicar-inicio-turma-fim");
+      return {
+        sucesso: !!protocolo,
+        protocolo,
+        mensagem: protocolo ? `Início comunicado: ${protocolo}` : "Falha ao comunicar",
+      };
+    } catch (err) {
+      console.error("[GESP] Erro ao comunicar início turma:", err);
+      return { sucesso: false, erros: [`${err}`] };
+    }
+  }
+
+  /**
+   * Menu: Turma > Comunicar Conclusão
+   */
+  async comunicarConclusaoTurma(turmaId: string): Promise<ProcessoResult> {
+    if (!this.page) return { sucesso: false, erros: ["Página não inicializada"] };
+
+    try {
+      await this.screenshot("comunicar-conclusao-turma-inicio");
+      await this.navigateMenu("Turma", "Acompanhar");
+      await this.waitForGespPage();
+
+      const turmaRow = await this.page.$(`text="${turmaId}"`);
+      if (turmaRow) {
+        await turmaRow.click();
+        await this.page.waitForLoadState("networkidle");
+        await delay();
+      }
+
+      const conclusaoBtn = await this.page.$('button:has-text("Comunicar Conclusão")');
+      if (conclusaoBtn) {
+        await conclusaoBtn.click();
+        await this.page.waitForLoadState("networkidle");
+        await delay();
+      }
+
+      const protocolo = await this.handleGespConfirmation();
+
+      await this.screenshot("comunicar-conclusao-turma-fim");
+      return {
+        sucesso: !!protocolo,
+        protocolo,
+        mensagem: protocolo ? `Conclusão comunicada: ${protocolo}` : "Falha ao comunicar",
+      };
+    } catch (err) {
+      console.error("[GESP] Erro ao comunicar conclusão turma:", err);
+      return { sucesso: false, erros: [`${err}`] };
+    }
+  }
+
+  /**
+   * Menu: Turma > Comunicar Cancelamento
+   */
+  async comunicarCancelamentoTurma(turmaId: string, motivo: string): Promise<ProcessoResult> {
+    if (!this.page) return { sucesso: false, erros: ["Página não inicializada"] };
+
+    try {
+      await this.screenshot("comunicar-cancelamento-turma-inicio");
+      await this.navigateMenu("Turma", "Acompanhar");
+      await this.waitForGespPage();
+
+      const turmaRow = await this.page.$(`text="${turmaId}"`);
+      if (turmaRow) {
+        await turmaRow.click();
+        await this.page.waitForLoadState("networkidle");
+        await delay();
+      }
+
+      const cancelBtn = await this.page.$('button:has-text("Comunicar Cancelamento")');
+      if (cancelBtn) {
+        await cancelBtn.click();
+        await this.page.waitForLoadState("networkidle");
+        await delay();
+      }
+
+      const motivoInput = await this.page.$('textarea');
+      if (motivoInput) {
+        await motivoInput.fill(motivo);
+      }
+
+      const protocolo = await this.handleGespConfirmation();
+
+      await this.screenshot("comunicar-cancelamento-turma-fim");
+      return {
+        sucesso: !!protocolo,
+        protocolo,
+        mensagem: protocolo ? `Cancelamento comunicado: ${protocolo}` : "Falha ao comunicar",
+      };
+    } catch (err) {
+      console.error("[GESP] Erro ao comunicar cancelamento turma:", err);
+      return { sucesso: false, erros: [`${err}`] };
+    }
+  }
+
+  /**
+   * Menu: Turma > Definir Disciplinas
+   */
+  async definirDisciplinasTurma(turmaId: string, disciplinas: string[]): Promise<ProcessoResult> {
+    if (!this.page) return { sucesso: false, erros: ["Página não inicializada"] };
+
+    try {
+      const printAntes = await this.screenshot("definir-disciplinas-turma-inicio");
+      await this.navigateMenu("Turma", "Acompanhar");
+      await this.waitForGespPage();
+
+      const turmaRow = await this.page.$(`text="${turmaId}"`);
+      if (turmaRow) {
+        await turmaRow.click();
+        await this.page.waitForLoadState("networkidle");
+        await delay();
+      }
+
+      const disciplinasBtn = await this.page.$('button:has-text("Disciplinas"), button:has-text("Definir Disciplinas")');
+      if (disciplinasBtn) {
+        await disciplinasBtn.click();
+        await this.page.waitForLoadState("networkidle");
+        await delay();
+      }
+
+      // Select disciplinas checkboxes
+      if (disciplinas && disciplinas.length > 0) {
+        for (const disciplina of disciplinas) {
+          const checkbox = await this.page.$(`input[type="checkbox"][value="${disciplina}"], label:has-text("${disciplina}") >> .. >> input[type="checkbox"]`);
+          if (checkbox) {
+            await checkbox.check();
+          }
+        }
+      }
+
+      const protocolo = await this.clickGespActionButton("ENVIAR");
+      const printDepois = await this.screenshot("definir-disciplinas-turma-fim");
+
+      return {
+        sucesso: !!protocolo,
+        protocolo,
+        mensagem: protocolo ? `Disciplinas definidas: ${disciplinas.join(", ")}` : "Falha ao definir disciplinas",
+        printAntes,
+        printDepois,
+      };
+    } catch (err) {
+      console.error("[GESP] Erro ao definir disciplinas turma:", err);
+      const printDepois = await this.screenshot("definir-disciplinas-turma-erro");
+      return { sucesso: false, erros: [`${err}`], printAntes: await this.screenshot("error"), printDepois };
+    }
+  }
+
+  // =========================================================================
+  // MÓDULO GUIA DE TRANSPORTE
+  // =========================================================================
+
+  /**
+   * Menu: Guia de Transporte > Acompanhar
+   */
+  async acompanharGuiasTransporte(filtros?: {
+    ano?: string;
+    numero?: string;
+    situacao?: string;
+  }): Promise<ProcessoResult> {
+    if (!this.page) return { sucesso: false, erros: ["Página não inicializada"] };
+
+    try {
+      await this.screenshot("acompanhar-guia-inicio");
+      await this.navigateMenu("Guia de Transporte", "Acompanhar");
+      await this.waitForGespPage();
+
+      if (filtros?.ano) await this.fillFormField("Ano", filtros.ano);
+      if (filtros?.numero) await this.fillFormField("Número", filtros.numero);
+      if (filtros?.situacao) await this.selectDropdown("Situação", filtros.situacao);
+
+      const pesquisarBtn = await this.page.$('button:has-text("Pesquisar"), input[value="Pesquisar"]');
+      if (pesquisarBtn) {
+        await pesquisarBtn.click();
+        await this.page.waitForLoadState("networkidle");
+        await delay();
+      }
+
+      const tabela = await this.parseTable('table');
+      await this.screenshot("acompanhar-guia-fim");
+
+      return {
+        sucesso: true,
+        mensagem: `${tabela.length} guias encontradas`,
+      };
+    } catch (err) {
+      console.error("[GESP] Erro ao acompanhar guias de transporte:", err);
+      return { sucesso: false, erros: [`${err}`] };
+    }
+  }
+
+  /**
+   * Menu: Guia de Transporte > Solicitar Guia de Transporte
+   */
+  async solicitarGuiaTransporte(dados: {
+    tipoTransporte?: string;
+    gruLinhaDigitavel?: string;
+  }): Promise<ProcessoResult> {
+    if (!this.page) return { sucesso: false, erros: ["Página não inicializada"] };
+
+    try {
+      await this.screenshot("solicitar-guia-inicio");
+      await this.navigateMenu("Guia de Transporte", "Solicitar Guia de Transporte");
+      await this.waitForGespPage();
+
+      if (dados.tipoTransporte) {
+        await this.selectDropdown("Tipo", dados.tipoTransporte);
+      }
+
+      await this.clickTab("Guias de Recolhimento");
+      if (dados.gruLinhaDigitavel) {
+        await this.fillFormField("Linha Digitável", dados.gruLinhaDigitavel);
+      }
+
+      const protocolo = await this.clickGespActionButton("ENVIAR");
+
+      await this.screenshot("solicitar-guia-fim");
+      return {
+        sucesso: !!protocolo,
+        protocolo,
+        mensagem: protocolo ? `Guia solicitada: ${protocolo}` : "Falha ao solicitar",
+      };
+    } catch (err) {
+      console.error("[GESP] Erro ao solicitar guia de transporte:", err);
+      return { sucesso: false, erros: [`${err}`] };
+    }
+  }
+
+  /**
+   * Menu: Guia de Transporte > Editar Rascunhos
+   */
+  async editarRascunhosGuia(numeroGuia: string): Promise<ProcessoResult> {
+    if (!this.page) return { sucesso: false, erros: ["Página não inicializada"] };
+
+    try {
+      await this.screenshot("editar-rascunho-guia-inicio");
+      await this.navigateMenu("Guia de Transporte", "Editar Rascunhos");
+      await this.waitForGespPage();
+
+      const guiaRow = await this.page.$(`text="${numeroGuia}"`);
+      if (guiaRow) {
+        await guiaRow.click();
+        await this.page.waitForLoadState("networkidle");
+        await delay();
+      }
+
+      await this.screenshot("editar-rascunho-guia-fim");
+      return { sucesso: true, mensagem: "Rascunho carregado" };
+    } catch (err) {
+      console.error("[GESP] Erro ao editar rascunhos guia:", err);
+      return { sucesso: false, erros: [`${err}`] };
+    }
+  }
+
+  // =========================================================================
+  // MÓDULO COMUNICAÇÃO DE OCORRÊNCIA
+  // =========================================================================
+
+  /**
+   * Menu: Comunicação de Ocorrência > Acompanhar
+   */
+  async acompanharOcorrencias(filtros?: {
+    ano?: string;
+    numero?: string;
+    tipo?: string;
+    situacao?: string;
+  }): Promise<ProcessoResult> {
+    if (!this.page) return { sucesso: false, erros: ["Página não inicializada"] };
+
+    try {
+      await this.screenshot("acompanhar-ocorrencia-inicio");
+      await this.navigateMenu("Comunicação de Ocorrência", "Acompanhar");
+      await this.waitForGespPage();
+
+      if (filtros?.ano) await this.fillFormField("Ano", filtros.ano);
+      if (filtros?.numero) await this.fillFormField("Número", filtros.numero);
+      if (filtros?.tipo) await this.selectDropdown("Tipo", filtros.tipo);
+      if (filtros?.situacao) await this.selectDropdown("Situação", filtros.situacao);
+
+      const pesquisarBtn = await this.page.$('button:has-text("Pesquisar"), input[value="Pesquisar"]');
+      if (pesquisarBtn) {
+        await pesquisarBtn.click();
+        await this.page.waitForLoadState("networkidle");
+        await delay();
+      }
+
+      const tabela = await this.parseTable('table');
+      await this.screenshot("acompanhar-ocorrencia-fim");
+
+      return {
+        sucesso: true,
+        mensagem: `${tabela.length} ocorrências encontradas`,
+      };
+    } catch (err) {
+      console.error("[GESP] Erro ao acompanhar ocorrências:", err);
+      return { sucesso: false, erros: [`${err}`] };
+    }
+  }
+
+  /**
+   * Menu: Comunicação de Ocorrência > Comunicar Ocorrência
+   * Tipos: Roubo de Arma, Furto de Arma, Extravio de Arma, etc.
+   * PRAZO: 24h inicial, 10 days complementação
+   */
+  async comunicarOcorrencia(dados: {
+    tipo: "Roubo de Arma" | "Furto de Arma" | "Extravio de Arma" | string;
+    descricao?: string;
+    envolvidos?: Array<{ cpf: string; tipo: string }>;
+    armas?: Array<{ tipo: string; calibre: string; nroSerie: string }>;
+    arquivos?: Array<{ buffer: Buffer; nome: string }>;
+  }): Promise<ProcessoResult> {
+    if (!this.page) return { sucesso: false, erros: ["Página não inicializada"] };
+
+    try {
+      await this.screenshot("comunicar-ocorrencia-inicio");
+      await this.navigateMenu("Comunicação de Ocorrência", "Comunicar Ocorrência");
+      await this.waitForGespPage();
+
+      // Tab: Dados Básicos
+      await this.clickTab("Dados Básicos");
+      await this.selectDropdown("Tipo", dados.tipo);
+
+      // Tab: Dados da Ocorrência
+      await this.clickTab("Dados da Ocorrência");
+      if (dados.descricao) {
+        const descInput = await this.page.$('textarea');
+        if (descInput) {
+          await descInput.fill(dados.descricao);
+        }
+      }
+
+      // Tab: Envolvidos
+      await this.clickTab("Envolvidos");
+      if (dados.envolvidos && dados.envolvidos.length > 0) {
+        for (const envolvido of dados.envolvidos) {
+          const cpfInput = await this.page.$('input[name*="cpf"]');
+          if (cpfInput) {
+            await cpfInput.fill(envolvido.cpf.replace(/\D/g, ""));
+            const tipoSelect = await this.page.$('select[name*="tipo"]');
+            if (tipoSelect) {
+              await tipoSelect.selectOption({ label: envolvido.tipo });
+            }
+            const addBtn = await this.page.$('button:has-text("Adicionar")');
+            if (addBtn) {
+              await addBtn.click();
+              await this.page.waitForLoadState("networkidle");
+              await delay();
+            }
+          }
+        }
+      }
+
+      const protocolo = await this.clickGespActionButton("ENVIAR");
+
+      await this.screenshot("comunicar-ocorrencia-fim");
+      return {
+        sucesso: !!protocolo,
+        protocolo,
+        mensagem: protocolo ? `Ocorrência comunicada: ${protocolo}` : "Falha ao comunicar",
+      };
+    } catch (err) {
+      console.error("[GESP] Erro ao comunicar ocorrência:", err);
+      return { sucesso: false, erros: [`${err}`] };
+    }
+  }
+
+  /**
+   * Menu: Comunicação de Ocorrência > Enviar Complementação
+   * PRAZO: 10 dias para complementação
+   */
+  async enviarComplementacaoOcorrencia(ocorrenciaId: string, complementacao: {
+    descricao?: string;
+    arquivos?: Array<{ buffer: Buffer; nome: string }>;
+  }): Promise<ProcessoResult> {
+    if (!this.page) return { sucesso: false, erros: ["Página não inicializada"] };
+
+    try {
+      await this.screenshot("complementacao-ocorrencia-inicio");
+      await this.navigateMenu("Comunicação de Ocorrência", "Enviar Complementação");
+      await this.waitForGespPage();
+
+      const ocorrenciaRow = await this.page.$(`text="${ocorrenciaId}"`);
+      if (ocorrenciaRow) {
+        await ocorrenciaRow.click();
+        await this.page.waitForLoadState("networkidle");
+        await delay();
+      }
+
+      if (complementacao.descricao) {
+        const textareaInput = await this.page.$('textarea');
+        if (textareaInput) {
+          await textareaInput.fill(complementacao.descricao);
+        }
+      }
+
+      const protocolo = await this.clickGespActionButton("ENVIAR");
+
+      await this.screenshot("complementacao-ocorrencia-fim");
+      return {
+        sucesso: !!protocolo,
+        protocolo,
+        mensagem: protocolo ? `Complementação enviada: ${protocolo}` : "Falha ao enviar",
+      };
+    } catch (err) {
+      console.error("[GESP] Erro ao enviar complementação ocorrência:", err);
+      return { sucesso: false, erros: [`${err}`] };
+    }
+  }
+
+  /**
+   * Menu: Comunicação de Ocorrência > Editar Rascunhos
+   */
+  async editarRascunhosOcorrencia(numeroOcorrencia: string): Promise<ProcessoResult> {
+    if (!this.page) return { sucesso: false, erros: ["Página não inicializada"] };
+
+    try {
+      await this.screenshot("editar-rascunho-ocorrencia-inicio");
+      await this.navigateMenu("Comunicação de Ocorrência", "Editar Rascunhos");
+      await this.waitForGespPage();
+
+      const ocorrenciaRow = await this.page.$(`text="${numeroOcorrencia}"`);
+      if (ocorrenciaRow) {
+        await ocorrenciaRow.click();
+        await this.page.waitForLoadState("networkidle");
+        await delay();
+      }
+
+      await this.screenshot("editar-rascunho-ocorrencia-fim");
+      return { sucesso: true, mensagem: "Rascunho carregado" };
+    } catch (err) {
+      console.error("[GESP] Erro ao editar rascunhos ocorrência:", err);
+      return { sucesso: false, erros: [`${err}`] };
+    }
+  }
+
+  // =========================================================================
+  // MÓDULO COMUNICAÇÃO DE EVENTO
+  // =========================================================================
+
+  /**
+   * Menu: Comunicação de Evento > Acompanhar
+   */
+  async acompanharEventos(filtros?: {
+    ano?: string;
+    numero?: string;
+    tipo?: string;
+  }): Promise<ProcessoResult> {
+    if (!this.page) return { sucesso: false, erros: ["Página não inicializada"] };
+
+    try {
+      await this.screenshot("acompanhar-evento-inicio");
+      await this.navigateMenu("Comunicação de Evento", "Acompanhar");
+      await this.waitForGespPage();
+
+      if (filtros?.ano) await this.fillFormField("Ano", filtros.ano);
+      if (filtros?.numero) await this.fillFormField("Número", filtros.numero);
+      if (filtros?.tipo) await this.selectDropdown("Tipo", filtros.tipo);
+
+      const pesquisarBtn = await this.page.$('button:has-text("Pesquisar"), input[value="Pesquisar"]');
+      if (pesquisarBtn) {
+        await pesquisarBtn.click();
+        await this.page.waitForLoadState("networkidle");
+        await delay();
+      }
+
+      const tabela = await this.parseTable('table');
+      await this.screenshot("acompanhar-evento-fim");
+
+      return {
+        sucesso: true,
+        mensagem: `${tabela.length} eventos encontrados`,
+      };
+    } catch (err) {
+      console.error("[GESP] Erro ao acompanhar eventos:", err);
+      return { sucesso: false, erros: [`${err}`] };
+    }
+  }
+
+  /**
+   * Menu: Comunicação de Evento > Comunicar Evento
+   */
+  async comunicarEvento(dados: {
+    tipo?: string;
+    descricao?: string;
+    data?: string;
+  }): Promise<ProcessoResult> {
+    if (!this.page) return { sucesso: false, erros: ["Página não inicializada"] };
+
+    try {
+      await this.screenshot("comunicar-evento-inicio");
+      await this.navigateMenu("Comunicação de Evento", "Comunicar Evento");
+      await this.waitForGespPage();
+
+      if (dados.tipo) {
+        await this.selectDropdown("Tipo", dados.tipo);
+      }
+
+      if (dados.descricao) {
+        const textareaInput = await this.page.$('textarea');
+        if (textareaInput) {
+          await textareaInput.fill(dados.descricao);
+        }
+      }
+
+      if (dados.data) {
+        await this.fillFormField("Data", dados.data);
+      }
+
+      const protocolo = await this.clickGespActionButton("ENVIAR");
+
+      await this.screenshot("comunicar-evento-fim");
+      return {
+        sucesso: !!protocolo,
+        protocolo,
+        mensagem: protocolo ? `Evento comunicado: ${protocolo}` : "Falha ao comunicar",
+      };
+    } catch (err) {
+      console.error("[GESP] Erro ao comunicar evento:", err);
+      return { sucesso: false, erros: [`${err}`] };
+    }
+  }
+
+  /**
+   * Menu: Comunicação de Evento > Editar Rascunhos
+   */
+  async editarRascunhosEvento(numeroEvento: string): Promise<ProcessoResult> {
+    if (!this.page) return { sucesso: false, erros: ["Página não inicializada"] };
+
+    try {
+      await this.screenshot("editar-rascunho-evento-inicio");
+      await this.navigateMenu("Comunicação de Evento", "Editar Rascunhos");
+      await this.waitForGespPage();
+
+      const eventoRow = await this.page.$(`text="${numeroEvento}"`);
+      if (eventoRow) {
+        await eventoRow.click();
+        await this.page.waitForLoadState("networkidle");
+        await delay();
+      }
+
+      await this.screenshot("editar-rascunho-evento-fim");
+      return { sucesso: true, mensagem: "Rascunho carregado" };
+    } catch (err) {
+      console.error("[GESP] Erro ao editar rascunhos evento:", err);
+      return { sucesso: false, erros: [`${err}`] };
+    }
+  }
+
+  // =========================================================================
+  // MÓDULO CREDENCIAMENTO DE INSTRUTORES
+  // =========================================================================
+
+  /**
+   * Menu: Credenciamento de Instrutores > Acompanhar
+   */
+  async acompanharCredenciamentos(filtros?: {
+    ano?: string;
+    numero?: string;
+    situacao?: string;
+  }): Promise<ProcessoResult> {
+    if (!this.page) return { sucesso: false, erros: ["Página não inicializada"] };
+
+    try {
+      await this.screenshot("acompanhar-credenciamento-inicio");
+      await this.navigateMenu("Credenciamento de Instrutores", "Acompanhar");
+      await this.waitForGespPage();
+
+      if (filtros?.ano) await this.fillFormField("Ano", filtros.ano);
+      if (filtros?.numero) await this.fillFormField("Número", filtros.numero);
+      if (filtros?.situacao) await this.selectDropdown("Situação", filtros.situacao);
+
+      const pesquisarBtn = await this.page.$('button:has-text("Pesquisar"), input[value="Pesquisar"]');
+      if (pesquisarBtn) {
+        await pesquisarBtn.click();
+        await this.page.waitForLoadState("networkidle");
+        await delay();
+      }
+
+      const tabela = await this.parseTable('table');
+      await this.screenshot("acompanhar-credenciamento-fim");
+
+      return {
+        sucesso: true,
+        mensagem: `${tabela.length} credenciamentos encontrados`,
+      };
+    } catch (err) {
+      console.error("[GESP] Erro ao acompanhar credenciamentos:", err);
+      return { sucesso: false, erros: [`${err}`] };
+    }
+  }
+
+  /**
+   * Menu: Credenciamento de Instrutores > Solicitar Credenciamento de Instrutor
+   */
+  async solicitarCredenciamentoInstrutor(dados: {
+    cpfInstrutor: string;
+    nomeInstrutor?: string;
+    disciplinas?: string[];
+    curriculo?: { buffer: Buffer; nome: string };
+    gruLinhaDigitavel?: string;
+  }): Promise<ProcessoResult> {
+    if (!this.page) return { sucesso: false, erros: ["Página não inicializada"] };
+
+    try {
+      await this.screenshot("solicitar-credenciamento-inicio");
+      await this.navigateMenu("Credenciamento de Instrutores", "Solicitar Credenciamento de Instrutor");
+      await this.waitForGespPage();
+
+      const cpfInput = await this.page.$('input[name*="cpf"]');
+      if (cpfInput) {
+        await cpfInput.fill(dados.cpfInstrutor.replace(/\D/g, ""));
+        const buscarBtn = await this.page.$('button:has-text("Buscar")');
+        if (buscarBtn) {
+          await buscarBtn.click();
+          await this.page.waitForLoadState("networkidle");
+          await delay();
+        }
+      }
+
+      if (dados.disciplinas && dados.disciplinas.length > 0) {
+        for (const disciplina of dados.disciplinas) {
+          const checkbox = await this.page.$(`input[type="checkbox"][value="${disciplina}"], label:has-text("${disciplina}") >> .. >> input`);
+          if (checkbox) {
+            await checkbox.check();
+          }
+        }
+      }
+
+      if (dados.curriculo) {
+        const fileInput = await this.page.$('input[type="file"]');
+        if (fileInput) {
+          const tmpPath = path.join(os.tmpdir(), dados.curriculo.nome);
+          fs.writeFileSync(tmpPath, dados.curriculo.buffer);
+          await fileInput.setInputFiles(tmpPath);
+          await delay();
+          fs.unlinkSync(tmpPath);
+        }
+      }
+
+      const protocolo = await this.clickGespActionButton("ENVIAR");
+
+      await this.screenshot("solicitar-credenciamento-fim");
+      return {
+        sucesso: !!protocolo,
+        protocolo,
+        mensagem: protocolo ? `Credenciamento solicitado: ${protocolo}` : "Falha ao solicitar",
+      };
+    } catch (err) {
+      console.error("[GESP] Erro ao solicitar credenciamento instrutor:", err);
+      return { sucesso: false, erros: [`${err}`] };
+    }
+  }
+
+  /**
+   * Menu: Credenciamento de Instrutores > Editar Rascunhos
+   */
+  async editarRascunhosCredenciamento(numeroCredenciamento: string): Promise<ProcessoResult> {
+    if (!this.page) return { sucesso: false, erros: ["Página não inicializada"] };
+
+    try {
+      await this.screenshot("editar-rascunho-credenciamento-inicio");
+      await this.navigateMenu("Credenciamento de Instrutores", "Editar Rascunhos");
+      await this.waitForGespPage();
+
+      const credencialRow = await this.page.$(`text="${numeroCredenciamento}"`);
+      if (credencialRow) {
+        await credencialRow.click();
+        await this.page.waitForLoadState("networkidle");
+        await delay();
+      }
+
+      await this.screenshot("editar-rascunho-credenciamento-fim");
+      return { sucesso: true, mensagem: "Rascunho carregado" };
+    } catch (err) {
+      console.error("[GESP] Erro ao editar rascunhos credenciamento:", err);
+      return { sucesso: false, erros: [`${err}`] };
+    }
+  }
+
+  // =========================================================================
+  // MÓDULO CNV (CERTIFICADO DE VIGILANTE)
+  // =========================================================================
+
+  /**
+   * Menu: CNV > Solicitar
+   */
+  async solicitarCNV(cpfVigilante: string): Promise<ProcessoResult> {
+    if (!this.page) return { sucesso: false, erros: ["Página não inicializada"] };
+
+    try {
+      await this.screenshot("solicitar-cnv-inicio");
+      await this.navigateMenu("CNV", "Solicitar");
+      await this.waitForGespPage();
+
+      const cpfInput = await this.page.$('input[name*="cpf"]');
+      if (cpfInput) {
+        await cpfInput.fill(cpfVigilante.replace(/\D/g, ""));
+        const buscarBtn = await this.page.$('button:has-text("Buscar")');
+        if (buscarBtn) {
+          await buscarBtn.click();
+          await this.page.waitForLoadState("networkidle");
+          await delay();
+        }
+      }
+
+      const protocolo = await this.clickGespActionButton("ENVIAR");
+
+      await this.screenshot("solicitar-cnv-fim");
+      return {
+        sucesso: !!protocolo,
+        protocolo,
+        mensagem: protocolo ? `CNV solicitado: ${protocolo}` : "Falha ao solicitar",
+      };
+    } catch (err) {
+      console.error("[GESP] Erro ao solicitar CNV:", err);
+      return { sucesso: false, erros: [`${err}`] };
+    }
+  }
+
+  /**
+   * Menu: CNV > Imprimir
+   */
+  async imprimirCNV(cpfVigilante: string): Promise<ProcessoResult> {
+    if (!this.page) return { sucesso: false, erros: ["Página não inicializada"] };
+
+    try {
+      await this.screenshot("imprimir-cnv-inicio");
+      await this.navigateMenu("CNV", "Imprimir");
+      await this.waitForGespPage();
+
+      const cpfInput = await this.page.$('input[name*="cpf"]');
+      if (cpfInput) {
+        await cpfInput.fill(cpfVigilante.replace(/\D/g, ""));
+        const buscarBtn = await this.page.$('button:has-text("Buscar")');
+        if (buscarBtn) {
+          await buscarBtn.click();
+          await this.page.waitForLoadState("networkidle");
+          await delay(2000); // PDF pode levar mais tempo
+        }
+      }
+
+      await this.screenshot("imprimir-cnv-fim");
+      return { sucesso: true, mensagem: "CNV gerado para impressão" };
+    } catch (err) {
+      console.error("[GESP] Erro ao imprimir CNV:", err);
+      return { sucesso: false, erros: [`${err}`] };
+    }
+  }
+
+  // =========================================================================
+  // MÓDULO IMPORTAÇÃO
+  // =========================================================================
+
+  /**
+   * Menu: Importação > Importar Veículos
+   */
+  async importarVeiculos(xmlContent: string): Promise<ProcessoResult> {
+    if (!this.page) return { sucesso: false, erros: ["Página não inicializada"] };
+
+    try {
+      await this.screenshot("importar-veiculos-inicio");
+      await this.navigateMenu("Importação", "Importar Veículos");
+      await this.waitForGespPage();
+
+      const xmlBuffer = Buffer.from(xmlContent, "utf-8");
+      const tmpPath = path.join(os.tmpdir(), "veiculos.xml");
+      fs.writeFileSync(tmpPath, xmlBuffer);
+
+      const fileInput = await this.page.$('input[type="file"]');
+      if (fileInput) {
+        await fileInput.setInputFiles(tmpPath);
+        await delay();
+
+        const enviarBtn = await this.page.$('button:has-text("Enviar"), button:has-text("Importar")');
+        if (enviarBtn) {
+          await enviarBtn.click();
+          await this.page.waitForLoadState("networkidle");
+          await delay();
+        }
+      }
+
+      fs.unlinkSync(tmpPath);
+
+      const resultMsg = await this.page.$('.result, .info-message, .msg-sucesso');
+      let resultado = "";
+      if (resultMsg) {
+        resultado = (await resultMsg.textContent())?.trim() || "";
+      }
+
+      await this.screenshot("importar-veiculos-fim");
+      return { sucesso: true, mensagem: resultado };
+    } catch (err) {
+      console.error("[GESP] Erro ao importar veículos:", err);
+      return { sucesso: false, erros: [`${err}`] };
+    }
+  }
+
+  /**
+   * Menu: Importação > Importar Pessoas
+   */
+  async importarPessoas(xmlContent: string): Promise<ProcessoResult> {
+    if (!this.page) return { sucesso: false, erros: ["Página não inicializada"] };
+
+    try {
+      await this.screenshot("importar-pessoas-inicio");
+      await this.navigateMenu("Importação", "Importar Pessoas");
+      await this.waitForGespPage();
+
+      const xmlBuffer = Buffer.from(xmlContent, "utf-8");
+      const tmpPath = path.join(os.tmpdir(), "pessoas.xml");
+      fs.writeFileSync(tmpPath, xmlBuffer);
+
+      const fileInput = await this.page.$('input[type="file"]');
+      if (fileInput) {
+        await fileInput.setInputFiles(tmpPath);
+        await delay();
+
+        const enviarBtn = await this.page.$('button:has-text("Enviar"), button:has-text("Importar")');
+        if (enviarBtn) {
+          await enviarBtn.click();
+          await this.page.waitForLoadState("networkidle");
+          await delay();
+        }
+      }
+
+      fs.unlinkSync(tmpPath);
+
+      const resultMsg = await this.page.$('.result, .info-message, .msg-sucesso');
+      let resultado = "";
+      if (resultMsg) {
+        resultado = (await resultMsg.textContent())?.trim() || "";
+      }
+
+      await this.screenshot("importar-pessoas-fim");
+      return { sucesso: true, mensagem: resultado };
+    } catch (err) {
+      console.error("[GESP] Erro ao importar pessoas:", err);
+      return { sucesso: false, erros: [`${err}`] };
+    }
+  }
+
+  // =========================================================================
+  // MÓDULO NOTIFICAÇÃO AUTÔNOMA
+  // =========================================================================
+
+  /**
+   * Menu: Notificação Autônoma > Acompanhar
+   */
+  async acompanharNotificacoesAutonomas(filtros?: {
+    ano?: string;
+    numero?: string;
+    situacao?: string;
+  }): Promise<ProcessoResult> {
+    if (!this.page) return { sucesso: false, erros: ["Página não inicializada"] };
+
+    try {
+      await this.screenshot("acompanhar-notif-autonoma-inicio");
+      await this.navigateMenu("Notificação Autônoma", "Acompanhar");
+      await this.waitForGespPage();
+
+      if (filtros?.ano) await this.fillFormField("Ano", filtros.ano);
+      if (filtros?.numero) await this.fillFormField("Número", filtros.numero);
+      if (filtros?.situacao) await this.selectDropdown("Situação", filtros.situacao);
+
+      const pesquisarBtn = await this.page.$('button:has-text("Pesquisar"), input[value="Pesquisar"]');
+      if (pesquisarBtn) {
+        await pesquisarBtn.click();
+        await this.page.waitForLoadState("networkidle");
+        await delay();
+      }
+
+      const tabela = await this.parseTable('table');
+      await this.screenshot("acompanhar-notif-autonoma-fim");
+
+      return {
+        sucesso: true,
+        mensagem: `${tabela.length} notificações encontradas`,
+      };
+    } catch (err) {
+      console.error("[GESP] Erro ao acompanhar notificações autônomas:", err);
+      return { sucesso: false, erros: [`${err}`] };
+    }
+  }
+
+  /**
+   * Menu: Notificação Autônoma > Responder Notificações
+   */
+  async responderNotificacaoAutonoma(numeroNotificacao: string, resposta: {
+    texto?: string;
+    arquivos?: Array<{ buffer: Buffer; nome: string }>;
+  }): Promise<ProcessoResult> {
+    if (!this.page) return { sucesso: false, erros: ["Página não inicializada"] };
+
+    try {
+      await this.screenshot("responder-notif-autonoma-inicio");
+      await this.navigateMenu("Notificação Autônoma", "Responder Notificações");
+      await this.waitForGespPage();
+
+      const notifRow = await this.page.$(`text="${numeroNotificacao}"`);
+      if (notifRow) {
+        await notifRow.click();
+        await this.page.waitForLoadState("networkidle");
+        await delay();
+      }
+
+      if (resposta.texto) {
+        const textareaInput = await this.page.$('textarea');
+        if (textareaInput) {
+          await textareaInput.fill(resposta.texto);
+        }
+      }
+
+      const protocolo = await this.clickGespActionButton("ENVIAR");
+
+      await this.screenshot("responder-notif-autonoma-fim");
+      return {
+        sucesso: !!protocolo,
+        protocolo,
+        mensagem: protocolo ? `Resposta enviada: ${protocolo}` : "Falha ao enviar",
+      };
+    } catch (err) {
+      console.error("[GESP] Erro ao responder notificação autônoma:", err);
+      return { sucesso: false, erros: [`${err}`] };
+    }
+  }
+
+  // =========================================================================
+  // MÓDULO PROCESSO PUNITIVO
+  // =========================================================================
+
+  /**
+   * Menu: Processo Punitivo > Acompanhar
+   */
+  async acompanharProcessosPunitivos(filtros?: {
+    ano?: string;
+    numero?: string;
+    situacao?: string;
+  }): Promise<ProcessoResult> {
+    if (!this.page) return { sucesso: false, erros: ["Página não inicializada"] };
+
+    try {
+      await this.screenshot("acompanhar-punitivo-inicio");
+      await this.navigateMenu("Processo Punitivo", "Acompanhar");
+      await this.waitForGespPage();
+
+      if (filtros?.ano) await this.fillFormField("Ano", filtros.ano);
+      if (filtros?.numero) await this.fillFormField("Número", filtros.numero);
+      if (filtros?.situacao) await this.selectDropdown("Situação", filtros.situacao);
+
+      const pesquisarBtn = await this.page.$('button:has-text("Pesquisar"), input[value="Pesquisar"]');
+      if (pesquisarBtn) {
+        await pesquisarBtn.click();
+        await this.page.waitForLoadState("networkidle");
+        await delay();
+      }
+
+      const tabela = await this.parseTable('table');
+      await this.screenshot("acompanhar-punitivo-fim");
+
+      return {
+        sucesso: true,
+        mensagem: `${tabela.length} processos encontrados`,
+      };
+    } catch (err) {
+      console.error("[GESP] Erro ao acompanhar processos punitivos:", err);
+      return { sucesso: false, erros: [`${err}`] };
+    }
+  }
+
+  /**
+   * Menu: Processo Punitivo > Enviar Defesa
+   */
+  async enviarDefesaPunitivo(numeroProcesso: string, defesa: {
+    fundamentacao?: string;
+    arquivos?: Array<{ buffer: Buffer; nome: string }>;
+  }): Promise<ProcessoResult> {
+    if (!this.page) return { sucesso: false, erros: ["Página não inicializada"] };
+
+    try {
+      await this.screenshot("enviar-defesa-punitivo-inicio");
+      await this.navigateMenu("Processo Punitivo", "Enviar Defesa");
+      await this.waitForGespPage();
+
+      const processoRow = await this.page.$(`text="${numeroProcesso}"`);
+      if (processoRow) {
+        await processoRow.click();
+        await this.page.waitForLoadState("networkidle");
+        await delay();
+      }
+
+      if (defesa.fundamentacao) {
+        const textareaInput = await this.page.$('textarea');
+        if (textareaInput) {
+          await textareaInput.fill(defesa.fundamentacao);
+        }
+      }
+
+      const protocolo = await this.clickGespActionButton("ENVIAR");
+
+      await this.screenshot("enviar-defesa-punitivo-fim");
+      return {
+        sucesso: !!protocolo,
+        protocolo,
+        mensagem: protocolo ? `Defesa enviada: ${protocolo}` : "Falha ao enviar",
+      };
+    } catch (err) {
+      console.error("[GESP] Erro ao enviar defesa punitivo:", err);
+      return { sucesso: false, erros: [`${err}`] };
+    }
+  }
+
+  /**
+   * Menu: Processo Punitivo > Interpor Recurso
+   */
+  async interporRecursoPunitivo(numeroProcesso: string, recurso: {
+    fundamentacao?: string;
+    arquivos?: Array<{ buffer: Buffer; nome: string }>;
+  }): Promise<ProcessoResult> {
+    if (!this.page) return { sucesso: false, erros: ["Página não inicializada"] };
+
+    try {
+      await this.screenshot("interpor-recurso-punitivo-inicio");
+      await this.navigateMenu("Processo Punitivo", "Interpor Recurso");
+      await this.waitForGespPage();
+
+      const processoRow = await this.page.$(`text="${numeroProcesso}"`);
+      if (processoRow) {
+        await processoRow.click();
+        await this.page.waitForLoadState("networkidle");
+        await delay();
+      }
+
+      if (recurso.fundamentacao) {
+        const textareaInput = await this.page.$('textarea');
+        if (textareaInput) {
+          await textareaInput.fill(recurso.fundamentacao);
+        }
+      }
+
+      const protocolo = await this.clickGespActionButton("ENVIAR");
+
+      await this.screenshot("interpor-recurso-punitivo-fim");
+      return {
+        sucesso: !!protocolo,
+        protocolo,
+        mensagem: protocolo ? `Recurso interposto: ${protocolo}` : "Falha ao enviar",
+      };
+    } catch (err) {
+      console.error("[GESP] Erro ao interpor recurso punitivo:", err);
+      return { sucesso: false, erros: [`${err}`] };
+    }
+  }
+
+  /**
+   * Menu: Processo Punitivo > Gerar GRU / Declarar Pagamento Multa
+   */
+  async gerarGRUMulta(numeroProcesso: string): Promise<ProcessoResult> {
+    if (!this.page) return { sucesso: false, erros: ["Página não inicializada"] };
+
+    try {
+      await this.screenshot("gerar-gru-multa-inicio");
+      await this.navigateMenu("Processo Punitivo", "Gerar GRU / Declarar Pagamento Multa");
+      await this.waitForGespPage();
+
+      const processoRow = await this.page.$(`text="${numeroProcesso}"`);
+      if (processoRow) {
+        await processoRow.click();
+        await this.page.waitForLoadState("networkidle");
+        await delay();
+      }
+
+      const gerarBtn = await this.page.$('button:has-text("Gerar")');
+      if (gerarBtn) {
+        await gerarBtn.click();
+        await this.page.waitForLoadState("networkidle");
+        await delay(2000);
+      }
+
+      await this.screenshot("gerar-gru-multa-fim");
+      return { sucesso: true, mensagem: "GRU gerada" };
+    } catch (err) {
+      console.error("[GESP] Erro ao gerar GRU multa:", err);
+      return { sucesso: false, erros: [`${err}`] };
+    }
+  }
+
+  /**
+   * Menu: Processo Punitivo > Declarar Pagamento Multa
+   */
+  async declararPagamentoMulta(numeroProcesso: string, gruLinhaDigitavel: string): Promise<ProcessoResult> {
+    if (!this.page) return { sucesso: false, erros: ["Página não inicializada"] };
+
+    try {
+      await this.screenshot("declarar-pagamento-multa-inicio");
+      await this.navigateMenu("Processo Punitivo", "Gerar GRU / Declarar Pagamento Multa");
+      await this.waitForGespPage();
+
+      const processoRow = await this.page.$(`text="${numeroProcesso}"`);
+      if (processoRow) {
+        await processoRow.click();
+        await this.page.waitForLoadState("networkidle");
+        await delay();
+      }
+
+      const linhaInput = await this.page.$('input[name*="linha"], [placeholder*="Linha Digitável"]');
+      if (linhaInput) {
+        await linhaInput.fill(gruLinhaDigitavel);
+      }
+
+      const declararBtn = await this.page.$('button:has-text("Declarar")');
+      if (declararBtn) {
+        await declararBtn.click();
+        await this.page.waitForLoadState("networkidle");
+        await delay();
+      }
+
+      const protocolo = await this.handleGespConfirmation();
+
+      await this.screenshot("declarar-pagamento-multa-fim");
+      return {
+        sucesso: !!protocolo,
+        protocolo,
+        mensagem: protocolo ? `Pagamento declarado: ${protocolo}` : "Falha ao declarar",
+      };
+    } catch (err) {
+      console.error("[GESP] Erro ao declarar pagamento multa:", err);
+      return { sucesso: false, erros: [`${err}`] };
+    }
+  }
+
+  /**
+   * Menu: Processo Punitivo > Restituição de Multa
+   */
+  async solicitarRestituicaoMulta(numeroProcesso: string, justificativa: string): Promise<ProcessoResult> {
+    if (!this.page) return { sucesso: false, erros: ["Página não inicializada"] };
+
+    try {
+      await this.screenshot("restituicao-multa-inicio");
+      await this.navigateMenu("Processo Punitivo", "Restituição de Multa");
+      await this.waitForGespPage();
+
+      const processoRow = await this.page.$(`text="${numeroProcesso}"`);
+      if (processoRow) {
+        await processoRow.click();
+        await this.page.waitForLoadState("networkidle");
+        await delay();
+      }
+
+      const justificativaInput = await this.page.$('textarea');
+      if (justificativaInput) {
+        await justificativaInput.fill(justificativa);
+      }
+
+      const protocolo = await this.clickGespActionButton("ENVIAR");
+
+      await this.screenshot("restituicao-multa-fim");
+      return {
+        sucesso: !!protocolo,
+        protocolo,
+        mensagem: protocolo ? `Restituição solicitada: ${protocolo}` : "Falha ao solicitar",
+      };
+    } catch (err) {
+      console.error("[GESP] Erro ao solicitar restituição multa:", err);
+      return { sucesso: false, erros: [`${err}`] };
+    }
+  }
+
+  // =========================================================================
+  // MÓDULO PROCESSO BANCÁRIO (INSTITUIÇÕES FINANCEIRAS)
+  // =========================================================================
+
+  /**
+   * Menu: Processo Bancário > Acompanhar
+   */
+  async acompanharProcessosBancarios(filtros?: {
+    ano?: string;
+    numero?: string;
+    tipo?: string;
+    situacao?: string;
+  }): Promise<ProcessoResult> {
+    if (!this.page) return { sucesso: false, erros: ["Página não inicializada"] };
+
+    try {
+      await this.screenshot("acompanhar-bancario-inicio");
+      await this.navigateMenu("Processo Bancário", "Acompanhar");
+      await this.waitForGespPage();
+
+      if (filtros?.ano) await this.fillFormField("Ano", filtros.ano);
+      if (filtros?.numero) await this.fillFormField("Número", filtros.numero);
+      if (filtros?.tipo) await this.selectDropdown("Tipo", filtros.tipo);
+      if (filtros?.situacao) await this.selectDropdown("Situação", filtros.situacao);
+
+      const pesquisarBtn = await this.page.$('button:has-text("Pesquisar"), input[value="Pesquisar"]');
+      if (pesquisarBtn) {
+        await pesquisarBtn.click();
+        await this.page.waitForLoadState("networkidle");
+        await delay();
+      }
+
+      const tabela = await this.parseTable('table');
+      await this.screenshot("acompanhar-bancario-fim");
+
+      return {
+        sucesso: true,
+        mensagem: `${tabela.length} processos encontrados`,
+      };
+    } catch (err) {
+      console.error("[GESP] Erro ao acompanhar processos bancários:", err);
+      return { sucesso: false, erros: [`${err}`] };
+    }
+  }
+
+  /**
+   * Menu: Processo Bancário > Solicitar Recadastramento
+   */
+  async solicitarRecadastramentoBancario(dados: {
+    nomeInstituicao?: string;
+    gruLinhaDigitavel?: string;
+  }): Promise<ProcessoResult> {
+    if (!this.page) return { sucesso: false, erros: ["Página não inicializada"] };
+
+    try {
+      await this.screenshot("recadastramento-bancario-inicio");
+      await this.navigateMenu("Processo Bancário", "Solicitar Recadastramento");
+      await this.waitForGespPage();
+
+      if (dados.nomeInstituicao) {
+        await this.fillFormField("Nome Instituição", dados.nomeInstituicao);
+      }
+
+      await this.clickTab("Guias de Recolhimento");
+      if (dados.gruLinhaDigitavel) {
+        await this.fillFormField("Linha Digitável", dados.gruLinhaDigitavel);
+      }
+
+      const protocolo = await this.clickGespActionButton("ENVIAR");
+
+      await this.screenshot("recadastramento-bancario-fim");
+      return {
+        sucesso: !!protocolo,
+        protocolo,
+        mensagem: protocolo ? `Recadastramento solicitado: ${protocolo}` : "Falha ao solicitar",
+      };
+    } catch (err) {
+      console.error("[GESP] Erro ao solicitar recadastramento bancário:", err);
+      return { sucesso: false, erros: [`${err}`] };
+    }
+  }
+
+  /**
+   * Menu: Processo Bancário > Solicitar Plano de Segurança Nova Agência / PAB
+   * Formulário com múltiplas seções (Vigilantes, Alarme, CFTV, Detector de Metais, Cofre, etc)
+   */
+  async solicitarPlanoSegurancaNovaAgencia(dados: {
+    nomeAgencia?: string;
+    enderecoAgencia?: string;
+    vigilantes?: {
+      qtdPostos: number;
+      cnpjEmpresaSeguranca?: string;
+      disposicao?: string;
+    };
+    alarme?: {
+      tipo?: string;
+      linhaExclusiva?: boolean;
+      linkRedundante?: boolean;
+      fonteEnergia?: string;
+      recebimentoSinal?: string;
+    };
+    cftv?: {
+      presente?: boolean;
+      especificacoes?: string;
+    };
+    gruLinhaDigitavel?: string;
+  }): Promise<ProcessoResult> {
+    if (!this.page) return { sucesso: false, erros: ["Página não inicializada"] };
+
+    try {
+      await this.screenshot("plano-seguranca-nova-agencia-inicio");
+      await this.navigateMenu("Processo Bancário", "Solicitar Plano de Segurança Nova Agência / PAB");
+      await this.waitForGespPage();
+
+      // Tab: Dados Básicos
+      await this.clickTab("Dados Básicos");
+      if (dados.nomeAgencia) {
+        await this.fillFormField("Nome Agência", dados.nomeAgencia);
+      }
+      if (dados.enderecoAgencia) {
+        await this.fillFormField("Endereço", dados.enderecoAgencia);
+      }
+
+      // Tab: Vigilantes
+      await this.clickTab("Vigilantes");
+      if (dados.vigilantes?.qtdPostos) {
+        await this.fillFormField("Quantidade de Postos", String(dados.vigilantes.qtdPostos));
+      }
+      if (dados.vigilantes?.cnpjEmpresaSeguranca) {
+        await this.fillFormField("CNPJ Empresa Segurança", dados.vigilantes.cnpjEmpresaSeguranca);
+      }
+
+      // Tab: Alarme
+      await this.clickTab("Alarme");
+      if (dados.alarme?.tipo) {
+        await this.selectDropdown("Tipo Alarme", dados.alarme.tipo);
+      }
+      if (dados.alarme?.linhaExclusiva !== undefined) {
+        const linhaCheckbox = await this.page.$('input[type="checkbox"][name*="linha"], label:has-text("Linha Exclusiva") >> .. >> input');
+        if (linhaCheckbox) {
+          if (dados.alarme.linhaExclusiva) {
+            await linhaCheckbox.check();
+          } else {
+            await linhaCheckbox.uncheck();
+          }
+        }
+      }
+
+      // Tab: CFTV
+      await this.clickTab("CFTV");
+      if (dados.cftv?.presente !== undefined) {
+        const cftvCheckbox = await this.page.$('input[type="checkbox"][name*="cftv"], label:has-text("CFTV") >> .. >> input');
+        if (cftvCheckbox) {
+          if (dados.cftv.presente) {
+            await cftvCheckbox.check();
+          } else {
+            await cftvCheckbox.uncheck();
+          }
+        }
+      }
+
+      // Tab: Guias de Recolhimento
+      await this.clickTab("Guias de Recolhimento");
+      if (dados.gruLinhaDigitavel) {
+        await this.fillFormField("Linha Digitável", dados.gruLinhaDigitavel);
+      }
+
+      const protocolo = await this.clickGespActionButton("ENVIAR");
+
+      await this.screenshot("plano-seguranca-nova-agencia-fim");
+      return {
+        sucesso: !!protocolo,
+        protocolo,
+        mensagem: protocolo ? `Plano de segurança solicitado: ${protocolo}` : "Falha ao solicitar",
+      };
+    } catch (err) {
+      console.error("[GESP] Erro ao solicitar plano segurança nova agência:", err);
+      return { sucesso: false, erros: [`${err}`] };
+    }
+  }
+
+  /**
+   * Menu: Processo Bancário > Solicitar Renovação de Plano sem Alteração ou com Aumento
+   */
+  async solicitarRenovacaoPlanoAumento(dados: {
+    numeroPlanoAnterior?: string;
+    novosElementos?: {
+      nome: string;
+      quantidade: number;
+    }[];
+    gruLinhaDigitavel?: string;
+  }): Promise<ProcessoResult> {
+    if (!this.page) return { sucesso: false, erros: ["Página não inicializada"] };
+
+    try {
+      await this.screenshot("renovacao-plano-aumento-inicio");
+      await this.navigateMenu("Processo Bancário", "Solicitar Renovação de Plano com Aumento");
+      await this.waitForGespPage();
+
+      if (dados.numeroPlanoAnterior) {
+        const nrPlanoInput = await this.page.$('input[name*="numero"], input[placeholder*="Plano"]');
+        if (nrPlanoInput) {
+          await nrPlanoInput.fill(dados.numeroPlanoAnterior);
+        }
+      }
+
+      // Adicionar novos elementos
+      if (dados.novosElementos && dados.novosElementos.length > 0) {
+        for (const elemento of dados.novosElementos) {
+          const nomeSelect = await this.page.$('select[name*="elemento"]');
+          if (nomeSelect) {
+            await nomeSelect.selectOption({ label: elemento.nome });
+          }
+          const qtdInput = await this.page.$('input[name*="quantidade"]');
+          if (qtdInput) {
+            await qtdInput.fill(String(elemento.quantidade));
+          }
+          const adicionarBtn = await this.page.$('button:has-text("Adicionar")');
+          if (adicionarBtn) {
+            await adicionarBtn.click();
+            await this.page.waitForLoadState("networkidle");
+            await delay();
+          }
+        }
+      }
+
+      await this.clickTab("Guias de Recolhimento");
+      if (dados.gruLinhaDigitavel) {
+        await this.fillFormField("Linha Digitável", dados.gruLinhaDigitavel);
+      }
+
+      const protocolo = await this.clickGespActionButton("ENVIAR");
+
+      await this.screenshot("renovacao-plano-aumento-fim");
+      return {
+        sucesso: !!protocolo,
+        protocolo,
+        mensagem: protocolo ? `Renovação solicitada: ${protocolo}` : "Falha ao solicitar",
+      };
+    } catch (err) {
+      console.error("[GESP] Erro ao solicitar renovação plano aumento:", err);
+      return { sucesso: false, erros: [`${err}`] };
+    }
+  }
+
+  /**
+   * Menu: Processo Bancário > Editar Rascunho
+   */
+  async editarRascunhoBancario(numeroRascunho: string): Promise<ProcessoResult> {
+    if (!this.page) return { sucesso: false, erros: ["Página não inicializada"] };
+
+    try {
+      await this.screenshot("editar-rascunho-bancario-inicio");
+      await this.navigateMenu("Processo Bancário", "Editar Rascunho");
+      await this.waitForGespPage();
+
+      const rascunhoRow = await this.page.$(`text="${numeroRascunho}"`);
+      if (rascunhoRow) {
+        await rascunhoRow.click();
+        await this.page.waitForLoadState("networkidle");
+        await delay();
+      }
+
+      await this.screenshot("editar-rascunho-bancario-fim");
+      return { sucesso: true, mensagem: "Rascunho carregado" };
+    } catch (err) {
+      console.error("[GESP] Erro ao editar rascunho bancário:", err);
+      return { sucesso: false, erros: [`${err}`] };
+    }
+  }
+
+  /**
+   * Menu: Processo Bancário > Responder Notificação
+   */
+  async responderNotificacaoBancaria(numeroNotificacao: string, resposta: {
+    texto?: string;
+    arquivos?: Array<{ buffer: Buffer; nome: string }>;
+  }): Promise<ProcessoResult> {
+    if (!this.page) return { sucesso: false, erros: ["Página não inicializada"] };
+
+    try {
+      await this.screenshot("responder-notif-bancaria-inicio");
+      await this.navigateMenu("Processo Bancário", "Responder Notificação");
+      await this.waitForGespPage();
+
+      const notifRow = await this.page.$(`text="${numeroNotificacao}"`);
+      if (notifRow) {
+        await notifRow.click();
+        await this.page.waitForLoadState("networkidle");
+        await delay();
+      }
+
+      if (resposta.texto) {
+        const textareaInput = await this.page.$('textarea');
+        if (textareaInput) {
+          await textareaInput.fill(resposta.texto);
+        }
+      }
+
+      const protocolo = await this.clickGespActionButton("ENVIAR");
+
+      await this.screenshot("responder-notif-bancaria-fim");
+      return {
+        sucesso: !!protocolo,
+        protocolo,
+        mensagem: protocolo ? `Resposta enviada: ${protocolo}` : "Falha ao enviar",
+      };
+    } catch (err) {
+      console.error("[GESP] Erro ao responder notificação bancária:", err);
+      return { sucesso: false, erros: [`${err}`] };
+    }
+  }
+
+  /**
+   * Menu: Responder Notificação (general/punitivo)
+   */
+  async responderNotificacao(numeroNotificacao: string, params: {
+    texto?: string;
+    arquivos?: Array<{ buffer: Buffer; nome: string }>;
+  }): Promise<ProcessoResult> {
+    if (!this.page) return { sucesso: false, erros: ["Página não inicializada"] };
+
+    try {
+      const printAntes = await this.screenshot("responder-notificacao-inicio");
+      // Navigate to the notification response page
+      // This may need adjustment based on the actual menu structure
+      await this.navigateMenu("Notificação", "Responder");
+      await this.waitForGespPage();
+
+      const notifRow = await this.page.$(`text="${numeroNotificacao}"`);
+      if (notifRow) {
+        await notifRow.click();
+        await this.page.waitForLoadState("networkidle");
+        await delay();
+      }
+
+      // Fill the text response
+      if (params.texto) {
+        const textareaInput = await this.page.$('textarea');
+        if (textareaInput) {
+          await textareaInput.fill(params.texto);
+        }
+      }
+
+      // Handle file attachments
+      if (params.arquivos && params.arquivos.length > 0) {
+        const fileInput = await this.page.$('input[type="file"]');
+        if (fileInput) {
+          for (const arquivo of params.arquivos) {
+            const tmpPath = path.join(os.tmpdir(), arquivo.nome);
+            fs.writeFileSync(tmpPath, arquivo.buffer);
+            await fileInput.setInputFiles(tmpPath);
+            await delay();
+            fs.unlinkSync(tmpPath);
+          }
+        }
+      }
+
+      const protocolo = await this.clickGespActionButton("ENVIAR");
+      const printDepois = await this.screenshot("responder-notificacao-fim");
+
+      return {
+        sucesso: !!protocolo,
+        protocolo,
+        mensagem: protocolo ? `Resposta enviada: ${protocolo}` : "Falha ao enviar",
+        printAntes,
+        printDepois,
+      };
+    } catch (err) {
+      console.error("[GESP] Erro ao responder notificação:", err);
+      const printDepois = await this.screenshot("responder-notificacao-erro");
+      return { sucesso: false, erros: [`${err}`], printAntes: await this.screenshot("error"), printDepois };
+    }
+  }
+
+  /**
+   * Menu: Processo Bancário > Interpor Recurso
+   */
+  async interporRecursoBancario(numeroProcesso: string, recurso: {
+    fundamentacao?: string;
+    arquivos?: Array<{ buffer: Buffer; nome: string }>;
+  }): Promise<ProcessoResult> {
+    if (!this.page) return { sucesso: false, erros: ["Página não inicializada"] };
+
+    try {
+      await this.screenshot("interpor-recurso-bancario-inicio");
+      await this.navigateMenu("Processo Bancário", "Interpor Recurso");
+      await this.page.waitForLoadState("networkidle");
+      await this.waitForGespPage();
+
+      const processoRow = await this.page.$(`text="${numeroProcesso}"`);
+      if (processoRow) {
+        await processoRow.click();
+        await this.page.waitForLoadState("networkidle");
+        await delay();
+      }
+
+      if (recurso.fundamentacao) {
+        const textareaInput = await this.page.$('textarea');
+        if (textareaInput) {
+          await textareaInput.fill(recurso.fundamentacao);
+        }
+      }
+
+      const protocolo = await this.clickGespActionButton("ENVIAR");
+
+      await this.screenshot("interpor-recurso-bancario-fim");
+      return {
+        sucesso: !!protocolo,
+        protocolo,
+        mensagem: protocolo ? `Recurso interposto: ${protocolo}` : "Falha ao enviar",
+      };
+    } catch (err) {
+      console.error("[GESP] Erro ao interpor recurso bancário:", err);
+      return { sucesso: false, erros: [`${err}`] };
+    }
+  }
+
+  /**
+   * Menu: Processo Bancário > Solicitar Plano Emergencial
+   */
+  async solicitarPlanoEmergencial(dados: {
+    nomeAgencia?: string;
+    enderecoAgencia?: string;
+    vigilantes?: {
+      qtdPostos: number;
+      cnpjEmpresaSeguranca?: string;
+    };
+    alarme?: {
+      tipo?: string;
+    };
+    gruLinhaDigitavel?: string;
+  }): Promise<ProcessoResult> {
+    if (!this.page) return { sucesso: false, erros: ["Página não inicializada"] };
+
+    try {
+      await this.screenshot("plano-emergencial-inicio");
+      await this.navigateMenu("Processo Bancário", "Solicitar Plano Emergencial");
+      await this.waitForGespPage();
+
+      // Tab: Dados Básicos
+      await this.clickTab("Dados Básicos");
+      if (dados.nomeAgencia) {
+        await this.fillFormField("Nome Agência", dados.nomeAgencia);
+      }
+      if (dados.enderecoAgencia) {
+        await this.fillFormField("Endereço", dados.enderecoAgencia);
+      }
+
+      // Tab: Vigilantes
+      await this.clickTab("Vigilantes");
+      if (dados.vigilantes?.qtdPostos) {
+        await this.fillFormField("Quantidade de Postos", String(dados.vigilantes.qtdPostos));
+      }
+      if (dados.vigilantes?.cnpjEmpresaSeguranca) {
+        await this.fillFormField("CNPJ Empresa Segurança", dados.vigilantes.cnpjEmpresaSeguranca);
+      }
+
+      // Tab: Alarme
+      await this.clickTab("Alarme");
+      if (dados.alarme?.tipo) {
+        await this.selectDropdown("Tipo Alarme", dados.alarme.tipo);
+      }
+
+      // Tab: Guias de Recolhimento
+      await this.clickTab("Guias de Recolhimento");
+      if (dados.gruLinhaDigitavel) {
+        await this.fillFormField("Linha Digitável", dados.gruLinhaDigitavel);
+      }
+
+      const protocolo = await this.clickGespActionButton("ENVIAR");
+
+      await this.screenshot("plano-emergencial-fim");
+      return {
+        sucesso: !!protocolo,
+        protocolo,
+        mensagem: protocolo ? `Plano emergencial solicitado: ${protocolo}` : "Falha ao solicitar",
+      };
+    } catch (err) {
+      console.error("[GESP] Erro ao solicitar plano emergencial:", err);
+      return { sucesso: false, erros: [`${err}`] };
+    }
+  }
+
+  /**
+   * Menu: Processo Bancário > Solicitar Plano Mudança de Endereço
+   */
+  async solicitarPlanoMudancaEndereco(dados: {
+    numeroPlanoAnterior?: string;
+    novoEndereco?: string;
+    gruLinhaDigitavel?: string;
+  }): Promise<ProcessoResult> {
+    if (!this.page) return { sucesso: false, erros: ["Página não inicializada"] };
+
+    try {
+      await this.screenshot("plano-mudanca-endereco-inicio");
+      await this.navigateMenu("Processo Bancário", "Solicitar Plano Mudança de Endereço");
+      await this.waitForGespPage();
+
+      if (dados.numeroPlanoAnterior) {
+        const nrPlanoInput = await this.page.$('input[name*="numero"], input[placeholder*="Plano"]');
+        if (nrPlanoInput) {
+          await nrPlanoInput.fill(dados.numeroPlanoAnterior);
+        }
+      }
+
+      if (dados.novoEndereco) {
+        await this.fillFormField("Novo Endereço", dados.novoEndereco);
+      }
+
+      // Tab: Guias de Recolhimento
+      await this.clickTab("Guias de Recolhimento");
+      if (dados.gruLinhaDigitavel) {
+        await this.fillFormField("Linha Digitável", dados.gruLinhaDigitavel);
+      }
+
+      const protocolo = await this.clickGespActionButton("ENVIAR");
+
+      await this.screenshot("plano-mudanca-endereco-fim");
+      return {
+        sucesso: !!protocolo,
+        protocolo,
+        mensagem: protocolo ? `Mudança de endereço solicitada: ${protocolo}` : "Falha ao solicitar",
+      };
+    } catch (err) {
+      console.error("[GESP] Erro ao solicitar plano mudança endereço:", err);
+      return { sucesso: false, erros: [`${err}`] };
+    }
+  }
+
+  // =========================================================================
+  // MÉTODOS FALTANTES - SYNC INTEGRATION
+  // =========================================================================
+
+  /**
+   * 1. Cadastra um novo vigilante no GESP
+   */
+  async cadastrarVigilante(dados: {
+    nome_completo: string;
+    cpf: string;
+    rg: string;
+    data_nascimento: string;
+    nome_mae: string;
+    cnv_numero: string;
+    funcao: string;
+  }): Promise<ProcessoResult> {
+    if (!this.page) return { sucesso: false, erros: ["Página não inicializada"] };
+
+    try {
+      const printAntes = await this.screenshot("cadastrar-vigilante-inicio");
+      await this.navigateMenu("Vigilante", "Cadastrar Vigilante");
+      await this.waitForGespPage();
+
+      await this.fillFormField("Nome Completo", dados.nome_completo);
+      await this.fillFormField("CPF", dados.cpf);
+      await this.fillFormField("RG", dados.rg);
+      await this.fillFormField("Data de Nascimento", dados.data_nascimento);
+      await this.fillFormField("Nome da Mãe", dados.nome_mae);
+      await this.fillFormField("CNV Número", dados.cnv_numero);
+      await this.selectDropdown("Função", dados.funcao);
+
+      const protocolo = await this.clickGespActionButton("ENVIAR");
+      const printDepois = await this.screenshot("cadastrar-vigilante-fim");
+
+      return {
+        sucesso: !!protocolo,
+        protocolo,
+        mensagem: protocolo ? `Vigilante cadastrado: ${protocolo}` : "Falha ao cadastrar",
+        printAntes,
+        printDepois,
+      };
+    } catch (err) {
+      console.error("[GESP] Erro ao cadastrar vigilante:", err);
+      const printDepois = await this.screenshot("cadastrar-vigilante-erro");
+      return { sucesso: false, erros: [`${err}`], printAntes: await this.screenshot("error"), printDepois };
+    }
+  }
+
+  /**
+   * 2. Cria um novo processo autorizativo
+   */
+  async criarProcessoAutorizativo(dados: {
+    tipo: string;
+    descricao?: string;
+  }): Promise<ProcessoResult> {
+    if (!this.page) return { sucesso: false, erros: ["Página não inicializada"] };
+
+    try {
+      const printAntes = await this.screenshot("criar-processo-autorizativo-inicio");
+      await this.navigateMenu("Processo Autorizativo", "Criar");
+      await this.waitForGespPage();
+
+      await this.selectDropdown("Tipo de Processo", dados.tipo);
+      if (dados.descricao) {
+        await this.fillFormField("Descrição", dados.descricao);
+      }
+
+      const protocolo = await this.clickGespActionButton("VERIFICAR");
+      const printDepois = await this.screenshot("criar-processo-autorizativo-fim");
+
+      return {
+        sucesso: !!protocolo,
+        protocolo,
+        mensagem: protocolo ? `Processo criado: ${protocolo}` : "Falha ao criar",
+        printAntes,
+        printDepois,
+      };
+    } catch (err) {
+      console.error("[GESP] Erro ao criar processo autorizativo:", err);
+      const printDepois = await this.screenshot("criar-processo-autorizativo-erro");
+      return { sucesso: false, erros: [`${err}`], printAntes: await this.screenshot("error"), printDepois };
+    }
+  }
+
+  /**
+   * 3. Envia um processo (VERIFICAR + ENVIAR)
+   */
+  async enviarProcesso(processoId: string): Promise<ProcessoResult> {
+    if (!this.page) return { sucesso: false, erros: ["Página não inicializada"] };
+
+    try {
+      const printAntes = await this.screenshot("enviar-processo-inicio");
+      await this.navigateMenu("Processo Autorizativo", "Acompanhar");
+      await this.waitForGespPage();
+
+      const processoRow = await this.page.$(`text="${processoId}"`);
+      if (processoRow) {
+        await processoRow.click();
+        await this.page.waitForLoadState("networkidle");
+        await delay();
+      }
+
+      // VERIFICAR
+      const _verificarResult = await this.clickGespActionButton("VERIFICAR");
+      await delay();
+
+      // ENVIAR
+      const protocolo = await this.clickGespActionButton("ENVIAR");
+      const printDepois = await this.screenshot("enviar-processo-fim");
+
+      return {
+        sucesso: !!protocolo,
+        protocolo,
+        mensagem: protocolo ? `Processo enviado: ${protocolo}` : "Falha ao enviar",
+        printAntes,
+        printDepois,
+      };
+    } catch (err) {
+      console.error("[GESP] Erro ao enviar processo:", err);
+      const printDepois = await this.screenshot("enviar-processo-erro");
+      return { sucesso: false, erros: [`${err}`], printAntes: await this.screenshot("error"), printDepois };
+    }
+  }
+
+  /**
+   * 4. Verifica pendências de um processo
+   */
+  async verificarPendencias(processoId: string): Promise<ProcessoResult> {
+    if (!this.page) return { sucesso: false, erros: ["Página não inicializada"] };
+
+    try {
+      const printAntes = await this.screenshot("verificar-pendencias-inicio");
+      await this.navigateMenu("Processo Autorizativo", "Acompanhar");
+      await this.waitForGespPage();
+
+      const processoRow = await this.page.$(`text="${processoId}"`);
+      if (processoRow) {
+        await processoRow.click();
+        await this.page.waitForLoadState("networkidle");
+        await delay();
+      }
+
+      const pendenciasDiv = await this.page.$('.pendencias, .alertas, [class*="pendencia"]');
+      let pendencias: string[] = [];
+      if (pendenciasDiv) {
+        const text = await pendenciasDiv.textContent();
+        if (text) {
+          pendencias = text.split('\n').filter(p => p.trim().length > 0);
+        }
+      }
+
+      const printDepois = await this.screenshot("verificar-pendencias-fim");
+
+      return {
+        sucesso: true,
+        pendencias,
+        mensagem: `${pendencias.length} pendências encontradas`,
+        printAntes,
+        printDepois,
+      };
+    } catch (err) {
+      console.error("[GESP] Erro ao verificar pendências:", err);
+      const printDepois = await this.screenshot("verificar-pendencias-erro");
+      return { sucesso: false, erros: [`${err}`], pendencias: [], printAntes: await this.screenshot("error"), printDepois };
+    }
+  }
+
+  /**
+   * 5. Cria uma turma de treinamento
+   */
+  async criarTurma(dados: {
+    nomeTurma: string;
+    tipoCurso: string;
+    dataInicio: string;
+    dataFim: string;
+    local?: string;
+  }): Promise<ProcessoResult> {
+    if (!this.page) return { sucesso: false, erros: ["Página não inicializada"] };
+
+    try {
+      const printAntes = await this.screenshot("criar-turma-inicio");
+      await this.navigateMenu("Turma", "Cadastrar Turma");
+      await this.waitForGespPage();
+
+      await this.fillFormField("Nome da Turma", dados.nomeTurma);
+      await this.selectDropdown("Tipo de Curso", dados.tipoCurso);
+      await this.fillFormField("Data de Início", dados.dataInicio);
+      await this.fillFormField("Data de Fim", dados.dataFim);
+      if (dados.local) {
+        await this.fillFormField("Local", dados.local);
+      }
+
+      const turmaId = await this.clickGespActionButton("VERIFICAR");
+      const printDepois = await this.screenshot("criar-turma-fim");
+
+      return {
+        sucesso: !!turmaId,
+        turmaId,
+        mensagem: turmaId ? `Turma criada: ${turmaId}` : "Falha ao criar turma",
+        printAntes,
+        printDepois,
+      };
+    } catch (err) {
+      console.error("[GESP] Erro ao criar turma:", err);
+      const printDepois = await this.screenshot("criar-turma-erro");
+      return { sucesso: false, erros: [`${err}`], printAntes: await this.screenshot("error"), printDepois };
+    }
+  }
+
+  /**
+   * 6. Envia uma turma para o GESP
+   */
+  async enviarTurma(turmaId: string): Promise<ProcessoResult> {
+    if (!this.page) return { sucesso: false, erros: ["Página não inicializada"] };
+
+    try {
+      const printAntes = await this.screenshot("enviar-turma-inicio");
+      await this.navigateMenu("Turma", "Acompanhar");
+      await this.waitForGespPage();
+
+      const turmaRow = await this.page.$(`text="${turmaId}"`);
+      if (turmaRow) {
+        await turmaRow.click();
+        await this.page.waitForLoadState("networkidle");
+        await delay();
+      }
+
+      const protocolo = await this.clickGespActionButton("ENVIAR");
+      const printDepois = await this.screenshot("enviar-turma-fim");
+
+      return {
+        sucesso: !!protocolo,
+        protocolo,
+        mensagem: protocolo ? `Turma enviada: ${protocolo}` : "Falha ao enviar",
+        printAntes,
+        printDepois,
+      };
+    } catch (err) {
+      console.error("[GESP] Erro ao enviar turma:", err);
+      const printDepois = await this.screenshot("enviar-turma-erro");
+      return { sucesso: false, erros: [`${err}`], printAntes: await this.screenshot("error"), printDepois };
+    }
+  }
+
+  /**
+   * 7. Envia uma guia de transporte
+   */
+  async enviarGuiaTransporte(guiaId: string): Promise<ProcessoResult> {
+    if (!this.page) return { sucesso: false, erros: ["Página não inicializada"] };
+
+    try {
+      const printAntes = await this.screenshot("enviar-guia-transporte-inicio");
+      await this.navigateMenu("Guia de Transporte", "Acompanhar");
+      await this.waitForGespPage();
+
+      const guiaRow = await this.page.$(`text="${guiaId}"`);
+      if (guiaRow) {
+        await guiaRow.click();
+        await this.page.waitForLoadState("networkidle");
+        await delay();
+      }
+
+      const numeroGuia = await this.clickGespActionButton("ENVIAR");
+      const printDepois = await this.screenshot("enviar-guia-transporte-fim");
+
+      return {
+        sucesso: !!numeroGuia,
+        numeroGuia,
+        mensagem: numeroGuia ? `Guia enviada: ${numeroGuia}` : "Falha ao enviar",
+        printAntes,
+        printDepois,
+      };
+    } catch (err) {
+      console.error("[GESP] Erro ao enviar guia de transporte:", err);
+      const printDepois = await this.screenshot("enviar-guia-transporte-erro");
+      return { sucesso: false, erros: [`${err}`], printAntes: await this.screenshot("error"), printDepois };
+    }
+  }
+
+  /**
+   * 8. Cria uma comunicação de ocorrência (24h deadline)
+   */
+  async criarComunicacaoOcorrencia(dados: {
+    tipo: string;
+    dataOcorrencia: string;
+    horaOcorrencia: string;
+    localOcorrencia: string;
+    descricao: string;
+    boletimOcorrencia?: string;
+  }): Promise<ProcessoResult> {
+    if (!this.page) return { sucesso: false, erros: ["Página não inicializada"] };
+
+    try {
+      const printAntes = await this.screenshot("criar-comunicacao-ocorrencia-inicio");
+      await this.navigateMenu("Ocorrência", "Comunicar");
+      await this.waitForGespPage();
+
+      await this.selectDropdown("Tipo de Ocorrência", dados.tipo);
+      await this.fillFormField("Data da Ocorrência", dados.dataOcorrencia);
+      await this.fillFormField("Hora da Ocorrência", dados.horaOcorrencia);
+      await this.fillFormField("Local da Ocorrência", dados.localOcorrencia);
+      await this.fillFormField("Descrição", dados.descricao);
+      if (dados.boletimOcorrencia) {
+        await this.fillFormField("Boletim", dados.boletimOcorrencia);
+      }
+
+      const protocolo = await this.clickGespActionButton("ENVIAR");
+      const printDepois = await this.screenshot("criar-comunicacao-ocorrencia-fim");
+
+      return {
+        sucesso: !!protocolo,
+        protocolo,
+        mensagem: protocolo ? `Ocorrência comunicada: ${protocolo}` : "Falha ao comunicar",
+        printAntes,
+        printDepois,
+      };
+    } catch (err) {
+      console.error("[GESP] Erro ao criar comunicação de ocorrência:", err);
+      const printDepois = await this.screenshot("criar-comunicacao-ocorrencia-erro");
+      return { sucesso: false, erros: [`${err}`], printAntes: await this.screenshot("error"), printDepois };
+    }
+  }
+
+  /**
+   * 9. Cria uma comunicação de evento
+   */
+  async criarComunicacaoEvento(dados: {
+    tipoEvento: string;
+    nomeEvento: string;
+    armaFogo: boolean;
+    duracao?: string;
+    vigilantesCpfs: string[];
+    local?: string;
+    dataInicio: string;
+    dataFim?: string;
+  }): Promise<ProcessoResult> {
+    if (!this.page) return { sucesso: false, erros: ["Página não inicializada"] };
+
+    try {
+      const printAntes = await this.screenshot("criar-comunicacao-evento-inicio");
+      await this.navigateMenu("Evento", "Comunicar Evento");
+      await this.waitForGespPage();
+
+      await this.selectDropdown("Tipo de Evento", dados.tipoEvento);
+      await this.fillFormField("Nome do Evento", dados.nomeEvento);
+      await this.fillFormField("Data de Início", dados.dataInicio);
+      if (dados.dataFim) {
+        await this.fillFormField("Data de Fim", dados.dataFim);
+      }
+      if (dados.duracao) {
+        await this.fillFormField("Duração", dados.duracao);
+      }
+      if (dados.local) {
+        await this.fillFormField("Local", dados.local);
+      }
+
+      const armaFireCheckbox = await this.page.$('input[type="checkbox"][name*="arma"], label:has-text("Arma de Fogo") >> .. >> input');
+      if (armaFireCheckbox && dados.armaFogo) {
+        await armaFireCheckbox.check();
+      }
+
+      // Add vigilantes CPFs
+      for (const cpf of dados.vigilantesCpfs) {
+        await this.fillFormField("CPF do Vigilante", cpf);
+        const addBtn = await this.page.$('button:has-text("Adicionar")');
+        if (addBtn) {
+          await addBtn.click();
+          await delay();
+        }
+      }
+
+      const protocolo = await this.clickGespActionButton("ENVIAR");
+      const printDepois = await this.screenshot("criar-comunicacao-evento-fim");
+
+      return {
+        sucesso: !!protocolo,
+        protocolo,
+        mensagem: protocolo ? `Evento comunicado: ${protocolo}` : "Falha ao comunicar",
+        printAntes,
+        printDepois,
+      };
+    } catch (err) {
+      console.error("[GESP] Erro ao criar comunicação de evento:", err);
+      const printDepois = await this.screenshot("criar-comunicacao-evento-erro");
+      return { sucesso: false, erros: [`${err}`], printAntes: await this.screenshot("error"), printDepois };
+    }
+  }
+
+  /**
+   * 10. Importa XML (pessoa/veiculo/aluno)
+   */
+  async importarXml(tipo: string, xmlContent: string): Promise<ProcessoResult> {
+    if (!this.page) return { sucesso: false, erros: ["Página não inicializada"] };
+
+    try {
+      const printAntes = await this.screenshot(`importar-${tipo}-inicio`);
+
+      const menuMap: { [key: string]: string } = {
+        pessoa: "Importação",
+        veiculo: "Importação",
+        aluno: "Turma",
+      };
+      const subItemMap: { [key: string]: string } = {
+        pessoa: "Importar Pessoas",
+        veiculo: "Importar Veículos",
+        aluno: "Importar Alunos",
+      };
+
+      await this.navigateMenu(menuMap[tipo] || "Importação", subItemMap[tipo] || "Importar Pessoas");
+      await this.waitForGespPage();
+
+      const xmlBuffer = Buffer.from(xmlContent, "utf-8");
+      const tmpPath = path.join(os.tmpdir(), `${tipo}.xml`);
+      fs.writeFileSync(tmpPath, xmlBuffer);
+
+      const fileInput = await this.page.$('input[type="file"]');
+      if (fileInput) {
+        await fileInput.setInputFiles(tmpPath);
+        await delay();
+
+        const enviarBtn = await this.page.$('button:has-text("Enviar"), button:has-text("Importar")');
+        if (enviarBtn) {
+          await enviarBtn.click();
+          await this.page.waitForLoadState("networkidle");
+          await delay();
+        }
+      }
+
+      fs.unlinkSync(tmpPath);
+
+      const resultMsg = await this.page.$('.result, .info-message, .msg-sucesso, [class*="sucesso"]');
+      let registrosProcessados = 0;
+      if (resultMsg) {
+        const text = (await resultMsg.textContent()) || "";
+        const match = text.match(/\d+/);
+        if (match) registrosProcessados = parseInt(match[0]);
+      }
+
+      const printDepois = await this.screenshot(`importar-${tipo}-fim`);
+
+      return {
+        sucesso: true,
+        registrosProcessados,
+        mensagem: `${registrosProcessados} registros de ${tipo} importados`,
+        printAntes,
+        printDepois,
+      };
+    } catch (err) {
+      console.error(`[GESP] Erro ao importar ${tipo}:`, err);
+      const printDepois = await this.screenshot(`importar-${tipo}-erro`);
+      return { sucesso: false, erros: [`${err}`], printAntes: await this.screenshot("error"), printDepois };
+    }
+  }
+
+  /**
+   * 11. Captura snapshot da empresa (dados completos)
+   */
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  async snapshotEmpresa(): Promise<ProcessoResult & { rawData: any }> {
+    if (!this.page) return { sucesso: false, erros: ["Página não inicializada"], rawData: {} };
+
+    try {
+      const printAntes = await this.screenshot("snapshot-empresa-inicio");
+      await this.navigateMenu("Empresa", "Dados");
+      await this.waitForGespPage();
+
+      // Parse empresa data tables
+      const vigilantesTable = await this.parseTable('table:has-text("Vigilante"), table:first-of-type');
+      const postosTable = await this.parseTable('table:nth-of-type(2), table:has-text("Posto")');
+      const armasTable = await this.parseTable('table:nth-of-type(3), table:has-text("Arma")');
+
+      const rawData = {
+        vigilantes: vigilantesTable,
+        postos: postosTable,
+        armas: armasTable,
+        timestamp: new Date().toISOString(),
+      };
+
+      const printDepois = await this.screenshot("snapshot-empresa-fim");
+
+      return {
+        sucesso: true,
+        mensagem: `Snapshot capturado: ${vigilantesTable.length} vigilantes, ${postosTable.length} postos, ${armasTable.length} armas`,
+        rawData,
+        printAntes,
+        printDepois,
+      };
+    } catch (err) {
+      console.error("[GESP] Erro ao capturar snapshot da empresa:", err);
+      const printDepois = await this.screenshot("snapshot-empresa-erro");
+      return { sucesso: false, erros: [`${err}`], rawData: {}, printAntes: await this.screenshot("error"), printDepois };
+    }
+  }
+
+  /**
+   * 12. Gera GRU para pagamento de multa
+   */
+  async gerarGruMulta(numeroProcesso: string): Promise<ProcessoResult> {
+    if (!this.page) return { sucesso: false, erros: ["Página não inicializada"] };
+
+    try {
+      const printAntes = await this.screenshot("gerar-gru-multa-inicio");
+      await this.navigateMenu("Processo Punitivo", "Acompanhar");
+      await this.waitForGespPage();
+
+      const processoRow = await this.page.$(`text="${numeroProcesso}"`);
+      if (processoRow) {
+        await processoRow.click();
+        await this.page.waitForLoadState("networkidle");
+        await delay();
+      }
+
+      const gerarGruBtn = await this.page.$('button:has-text("Gerar GRU"), button:has-text("Guia de Recolhimento")');
+      if (gerarGruBtn) {
+        await gerarGruBtn.click();
+        await this.page.waitForLoadState("networkidle");
+        await delay();
+      }
+
+      const gruLinhaDiv = await this.page.$('[class*="linha"], [class*="gru"], .resultado');
+      let gruLinhaDigitavel = "";
+      if (gruLinhaDiv) {
+        const text = await gruLinhaDiv.textContent();
+        if (text) {
+          const match = text.match(/\d{5}\.\d{5}\s+\d{5}\.\d{6}\s+\d{5}\.\d{6}\s+\d/);
+          if (match) gruLinhaDigitavel = match[0];
+        }
+      }
+
+      const printDepois = await this.screenshot("gerar-gru-multa-fim");
+
+      return {
+        sucesso: !!gruLinhaDigitavel,
+        gruLinhaDigitavel,
+        mensagem: gruLinhaDigitavel ? `GRU gerada: ${gruLinhaDigitavel}` : "Falha ao gerar GRU",
+        printAntes,
+        printDepois,
+      };
+    } catch (err) {
+      console.error("[GESP] Erro ao gerar GRU para multa:", err);
+      const printDepois = await this.screenshot("gerar-gru-multa-erro");
+      return { sucesso: false, erros: [`${err}`], printAntes: await this.screenshot("error"), printDepois };
+    }
+  }
+
+  /**
+   * 13. Importa alunos para uma turma via XML
+   */
+  async importarAlunosTurma(turmaId: string, xmlContent: string): Promise<ProcessoResult> {
+    if (!this.page) return { sucesso: false, erros: ["Página não inicializada"] };
+
+    try {
+      const printAntes = await this.screenshot("importar-alunos-turma-inicio");
+      await this.navigateMenu("Turma", "Acompanhar");
+      await this.waitForGespPage();
+
+      const turmaRow = await this.page.$(`text="${turmaId}"`);
+      if (turmaRow) {
+        await turmaRow.click();
+        await this.page.waitForLoadState("networkidle");
+        await delay();
+      }
+
+      const importarAlunosBtn = await this.page.$('button:has-text("Importar Alunos")');
+      if (importarAlunosBtn) {
+        await importarAlunosBtn.click();
+        await this.page.waitForLoadState("networkidle");
+        await delay();
+      }
+
+      const xmlBuffer = Buffer.from(xmlContent, "utf-8");
+      const tmpPath = path.join(os.tmpdir(), "alunos.xml");
+      fs.writeFileSync(tmpPath, xmlBuffer);
+
+      const fileInput = await this.page.$('input[type="file"]');
+      if (fileInput) {
+        await fileInput.setInputFiles(tmpPath);
+        await delay();
+
+        const enviarBtn = await this.page.$('button:has-text("Enviar")');
+        if (enviarBtn) {
+          await enviarBtn.click();
+          await this.page.waitForLoadState("networkidle");
+          await delay();
+        }
+      }
+
+      fs.unlinkSync(tmpPath);
+
+      const resultMsg = await this.page.$('[class*="sucesso"], [class*="resultado"]');
+      let alunosImportados = 0;
+      if (resultMsg) {
+        const text = (await resultMsg.textContent()) || "";
+        const match = text.match(/\d+/);
+        if (match) alunosImportados = parseInt(match[0]);
+      }
+
+      const printDepois = await this.screenshot("importar-alunos-turma-fim");
+
+      return {
+        sucesso: true,
+        alunosImportados,
+        protocolo: `alunos-${alunosImportados}`,
+        mensagem: `${alunosImportados} alunos importados para a turma`,
+        printAntes,
+        printDepois,
+      };
+    } catch (err) {
+      console.error("[GESP] Erro ao importar alunos para turma:", err);
+      const printDepois = await this.screenshot("importar-alunos-turma-erro");
+      return { sucesso: false, erros: [`${err}`], printAntes: await this.screenshot("error"), printDepois };
+    }
+  }
+
+  /**
+   * 14. Adiciona um documento a um processo autorizativo
+   */
+  async adicionarDocumentoProcesso(processoId: string, documento: {
+    nome: string;
+    tipo: string;
+    buffer: Buffer;
+  }): Promise<ProcessoResult> {
+    if (!this.page) return { sucesso: false, erros: ["Página não inicializada"] };
+
+    try {
+      const printAntes = await this.screenshot("adicionar-documento-processo-inicio");
+      await this.navigateMenu("Processo Autorizativo", "Acompanhar");
+      await this.waitForGespPage();
+
+      const processoRow = await this.page.$(`text="${processoId}"`);
+      if (processoRow) {
+        await processoRow.click();
+        await this.page.waitForLoadState("networkidle");
+        await delay();
+      }
+
+      const docTab = await this.page.$('text="Documentos"');
+      if (docTab) {
+        await docTab.click();
+        await delay();
+      }
+
+      const tmpPath = path.join(os.tmpdir(), documento.nome);
+      fs.writeFileSync(tmpPath, documento.buffer);
+
+      const fileInput = await this.page.$('input[type="file"]');
+      if (fileInput) {
+        await fileInput.setInputFiles(tmpPath);
+        await delay(500);
+
+        const adicionarBtn = await this.page.$('button:has-text("Adicionar"), button:has-text("Salvar")');
+        if (adicionarBtn) {
+          await adicionarBtn.click();
+          await this.page.waitForLoadState("networkidle");
+          await delay();
+        }
+      }
+
+      fs.unlinkSync(tmpPath);
+
+      const printDepois = await this.screenshot("adicionar-documento-processo-fim");
+
+      return {
+        sucesso: true,
+        mensagem: `Documento ${documento.nome} adicionado ao processo`,
+        printAntes,
+        printDepois,
+      };
+    } catch (err) {
+      console.error("[GESP] Erro ao adicionar documento ao processo:", err);
+      const printDepois = await this.screenshot("adicionar-documento-processo-erro");
+      return { sucesso: false, erros: [`${err}`], printAntes: await this.screenshot("error"), printDepois };
+    }
+  }
+
+  /**
+   * 15. Consulta processos punitivos
+   */
+  async consultarProcessosPunitivos(): Promise<ProcessoResult & { processos: TabelaRow[] }> {
+    if (!this.page) return { sucesso: false, erros: ["Página não inicializada"], processos: [], printScreen: undefined };
+
+    try {
+      const printScreen = await this.screenshot("consultar-processos-punitivos");
+      await this.navigateMenu("Processo Punitivo", "Acompanhar");
+      await this.waitForGespPage();
+
+      const pesquisarBtn = await this.page.$('button:has-text("Pesquisar")');
+      if (pesquisarBtn) {
+        await pesquisarBtn.click();
+        await this.page.waitForLoadState("networkidle");
+        await delay();
+      }
+
+      const processos = await this.parseTable('table');
+
+      return {
+        sucesso: true,
+        processos,
+        mensagem: `${processos.length} processos punitivos encontrados`,
+        printScreen,
+      };
+    } catch (err) {
+      console.error("[GESP] Erro ao consultar processos punitivos:", err);
+      const printScreen = await this.screenshot("consultar-processos-punitivos-erro");
+      return { sucesso: false, erros: [`${err}`], processos: [], printScreen };
+    }
+  }
+
+  /**
+   * 16. Cadastra um procurador (pessoa física com procuração)
+   */
+  async cadastrarProcurador(cpf: string, nome: string): Promise<ProcessoResult> {
+    if (!this.page) return { sucesso: false, erros: ["Página não inicializada"] };
+
+    try {
+      const printAntes = await this.screenshot("cadastrar-procurador-inicio");
+      await this.navigateMenu("Empresa", "Procuradores");
+      await this.waitForGespPage();
+
+      const incluirBtn = await this.page.$('button:has-text("Incluir Procurador"), button:has-text("Novo")');
+      if (incluirBtn) {
+        await incluirBtn.click();
+        await this.page.waitForLoadState("networkidle");
+        await delay();
+      }
+
+      await this.fillFormField("CPF", cpf);
+      await this.fillFormField("Nome", nome);
+
+      const salvarBtn = await this.page.$('button:has-text("Salvar")');
+      if (salvarBtn) {
+        await salvarBtn.click();
+        await this.page.waitForLoadState("networkidle");
+        await delay();
+      }
+
+      const printDepois = await this.screenshot("cadastrar-procurador-fim");
+
+      return {
+        sucesso: true,
+        mensagem: `Procurador ${nome} cadastrado com sucesso`,
+        printAntes,
+        printDepois,
+      };
+    } catch (err) {
+      console.error("[GESP] Erro ao cadastrar procurador:", err);
+      const printDepois = await this.screenshot("cadastrar-procurador-erro");
+      return { sucesso: false, erros: [`${err}`], printAntes: await this.screenshot("error"), printDepois };
+    }
+  }
+
+  /**
+   * 17. Cria uma guia de transporte
+   */
+  async criarGuiaTransporte(dados: {
+    origemCidade: string;
+    origemUf: string;
+    destinoCidade: string;
+    destinoUf: string;
+    dataTransporte: string;
+    responsavelNome: string;
+    responsavelCpf: string;
+    veiculoPlaca?: string;
+  }): Promise<ProcessoResult> {
+    if (!this.page) return { sucesso: false, erros: ["Página não inicializada"] };
+
+    try {
+      const printAntes = await this.screenshot("criar-guia-transporte-inicio");
+      await this.navigateMenu("Guia de Transporte", "Criar");
+      await this.waitForGespPage();
+
+      await this.fillFormField("Cidade de Origem", dados.origemCidade);
+      await this.selectDropdown("UF de Origem", dados.origemUf);
+      await this.fillFormField("Cidade de Destino", dados.destinoCidade);
+      await this.selectDropdown("UF de Destino", dados.destinoUf);
+      await this.fillFormField("Data de Transporte", dados.dataTransporte);
+      await this.fillFormField("Nome do Responsável", dados.responsavelNome);
+      await this.fillFormField("CPF do Responsável", dados.responsavelCpf);
+      if (dados.veiculoPlaca) {
+        await this.fillFormField("Placa do Veículo", dados.veiculoPlaca);
+      }
+
+      const guiaId = await this.clickGespActionButton("VERIFICAR");
+      const printDepois = await this.screenshot("criar-guia-transporte-fim");
+
+      return {
+        sucesso: !!guiaId,
+        guiaId,
+        mensagem: guiaId ? `Guia de transporte criada: ${guiaId}` : "Falha ao criar guia",
+        printAntes,
+        printDepois,
+      };
+    } catch (err) {
+      console.error("[GESP] Erro ao criar guia de transporte:", err);
+      const printDepois = await this.screenshot("criar-guia-transporte-erro");
+      return { sucesso: false, erros: [`${err}`], printAntes: await this.screenshot("error"), printDepois };
+    }
+  }
+
+  // =========================================================================
+  // CERTIFICADO DIGITAL
+  // =========================================================================
+
+  /**
+   * Cria perfil Firefox temporário com certificado .pfx importado
+   */
+  private async createFirefoxProfile(pfxBuffer: Buffer, senha: string): Promise<string> {
+    const profileDir = fs.mkdtempSync(path.join(os.tmpdir(), "vigi-gesp-"));
+    const pfxPath = path.join(profileDir, "certificado.pfx");
+
+    fs.writeFileSync(pfxPath, pfxBuffer);
+
+    const { execSync } = await import("child_process");
+
+    try {
+      execSync(`certutil -d sql:${profileDir} -N --empty-password`, {
+        stdio: "pipe",
+      });
+
+      execSync(
+        `pk12util -d sql:${profileDir} -i "${pfxPath}" -W "${senha}"`,
+        { stdio: "pipe" }
+      );
+
+    } catch (err) {
+      console.error("[GESP] Erro ao importar certificado:", err);
+    }
+
+    fs.unlinkSync(pfxPath);
+    return profileDir;
+  }
+
+  /**
+   * Remove perfil Firefox temporário
+   */
+  private cleanupTempProfile(): void {
+    if (this.tempProfileDir && fs.existsSync(this.tempProfileDir)) {
+      try {
+        fs.rmSync(this.tempProfileDir, { recursive: true, force: true });
+      } catch (err) {
+        console.error(`[GESP] Erro ao remover perfil temporário: ${err}`);
+      }
+      this.tempProfileDir = null;
+    }
+  }
+
+  // =========================================================================
+  // ENCERRAMENTO
+  // =========================================================================
+
+  /**
+   * Fecha browser, libera lock e limpa recursos
+   */
+  async close(): Promise<void> {
+    try {
+      if (this.sessionId) {
+        await releaseGespLock(this.sessionId);
+      }
+    } catch (err) {
+      console.error("[GESP-BROWSER] Erro ao liberar lock:", err);
+    }
+
+    try {
+      if (this.context) await this.context.close();
+      if (this.browser) await this.browser.close();
+    } catch (err) {
+      console.error("[GESP-BROWSER] Erro ao fechar browser:", err);
+    }
+
+    this.cleanupTempProfile();
+
+    this.page = null;
+    this.context = null;
+    this.browser = null;
+
+  }
+}

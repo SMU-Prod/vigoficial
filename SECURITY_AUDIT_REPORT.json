@@ -1,0 +1,351 @@
+{
+  "area": "Authentication & Security",
+  "report_date": "2026-04-04",
+  "auditor": "Claude CTO Security Review",
+  "files_analyzed": [
+    "src/lib/auth/jwt.ts",
+    "src/lib/auth/jwt-edge.ts",
+    "src/lib/auth/middleware.ts",
+    "src/lib/auth/password.ts",
+    "src/lib/auth/mfa.ts",
+    "src/lib/auth/exchange-store.ts",
+    "src/lib/auth/refresh-token.ts",
+    "src/middleware.ts",
+    "src/lib/security/rate-limit.ts",
+    "src/lib/security/crypto.ts",
+    "src/lib/security/csrf.ts",
+    "src/lib/security/file-validation.ts",
+    "src/lib/security/billing-gate.ts",
+    "src/lib/validation/sanitize.ts",
+    "src/lib/validation/schemas.ts",
+    "src/lib/webhooks/verify.ts",
+    "src/lib/lgpd/compliance.ts",
+    "src/app/api/auth/login/route.ts",
+    "src/app/api/auth/logout/route.ts",
+    "src/app/api/auth/me/route.ts",
+    "src/app/api/auth/refresh/route.ts",
+    "src/app/api/auth/change-password/route.ts",
+    "src/app/api/auth/exchange/route.ts",
+    "src/app/api/auth/mfa/setup/route.ts",
+    "src/app/api/auth/mfa/verify/route.ts",
+    "src/app/api/auth/mfa/login/route.ts",
+    "src/app/api/auth/mfa/disable/route.ts",
+    "src/app/api/auth/users/route.ts",
+    "src/lib/supabase/middleware.ts",
+    "src/app/api/webhooks/asaas/route.ts",
+    "src/app/api/webhooks/gps/route.ts"
+  ],
+  "findings": [
+    {
+      "severity": "critical",
+      "title": "CSRF Token Timing Attack Vulnerability",
+      "file": "src/lib/security/csrf.ts",
+      "line": 47,
+      "description": "The CSRF token comparison uses simple string equality (===) instead of constant-time comparison. This enables timing attacks where attackers can guess tokens by measuring response time differences. Line 47: 'return tokenFromHeader === tokenFromCookie;' is vulnerable to timing analysis.",
+      "recommendation": "Implement constant-time comparison using crypto.timingSafeEqual() or similar. Example: const crypto = require('crypto'); return crypto.timingSafeEqual(Buffer.from(tokenFromHeader), Buffer.from(tokenFromCookie)) to prevent timing attacks."
+    },
+    {
+      "severity": "critical",
+      "title": "JWT Secret Not Validated at Startup",
+      "file": "src/lib/auth/jwt.ts",
+      "line": 4,
+      "description": "JWT_SECRET is accessed with non-null assertion (!) without validation. If JWT_SECRET is undefined or empty, the application will fail silently at token creation time. jwt-edge.ts has proper validation (line 11-14) but jwt.ts does not.",
+      "recommendation": "Add explicit validation at module load time: const JWT_SECRET = process.env.JWT_SECRET; if (!JWT_SECRET || JWT_SECRET.length < 32) { throw new Error('[JWT] JWT_SECRET must be defined and at least 32 characters'); }"
+    },
+    {
+      "severity": "critical",
+      "title": "Exchange Store In-Memory Token Storage - No Persistence",
+      "file": "src/lib/auth/exchange-store.ts",
+      "line": 18,
+      "description": "One-time exchange codes are stored in in-memory Map that is lost on server restart. If application restarts during login flow, users lose valid exchange codes. Additionally, there's no distributed session support for multi-instance deployments.",
+      "recommendation": "Migrate exchange tokens to Redis or database with proper TTL. This enables: (1) Persistence across restarts, (2) Distributed deployment support, (3) Better observability. Consider: export async function createExchangeCode(token: string, redirect: string): Promise<string> { const code = crypto.randomBytes(32).toString('hex'); await redis.setex(`exchange:${code}`, 60, JSON.stringify({token, redirect})); return code; }"
+    },
+    {
+      "severity": "critical",
+      "title": "MFA Setup Stores Unverified Secret in Database",
+      "file": "src/app/api/auth/mfa/setup/route.ts",
+      "line": 49,
+      "description": "MFA secret is stored in database (mfa_secret field) before verification. If an attacker gains temporary database access or exploits a race condition, they can enable MFA with a known secret. The secret should only be stored after successful verification in /mfa/verify.",
+      "recommendation": "Store temporary MFA secret in session/Redis with expiration (15min). Only move to permanent mfa_secret after TOTP verification. Example: await redis.setex(`mfa_setup:${userId}`, 900, secret); // Store temporarily, not in DB"
+    },
+    {
+      "severity": "critical",
+      "title": "Asaas Webhook Signature Verification is Optional",
+      "file": "src/app/api/webhooks/asaas/route.ts",
+      "line": 13,
+      "description": "Webhook signature verification only occurs if ASAAS_WEBHOOK_SECRET is set (line 14: 'if (webhookSecret)'). If this environment variable is missing or empty, webhooks are accepted without verification. This allows attackers to craft fake payment confirmations.",
+      "recommendation": "Make webhook signature verification mandatory: const webhookSecret = process.env.ASAAS_WEBHOOK_SECRET; if (!webhookSecret) { throw new Error('[ASAAS] ASAAS_WEBHOOK_SECRET must be configured'); } Also verify the signature uses HMAC-SHA256: const expectedSignature = crypto.createHmac('sha256', webhookSecret).update(rawBody).digest('hex');"
+    },
+    {
+      "severity": "critical",
+      "title": "GPS Webhook Authentication Using Simple String Match",
+      "file": "src/app/api/webhooks/gps/route.ts",
+      "line": 16,
+      "description": "GPS webhook token validation uses simple equality check (line 16: 'if (!token || token !== webhookSecret)'). No HMAC signature verification. Token is transmitted in Authorization header which may be logged. Susceptible to timing attacks and man-in-the-middle.",
+      "recommendation": "Implement HMAC-SHA256 signature verification: const signature = request.headers.get('x-gps-signature'); const rawBody = await request.text(); const expectedSig = crypto.createHmac('sha256', secret).update(rawBody).digest('hex'); if (!crypto.timingSafeEqual(Buffer.from(signature), Buffer.from(expectedSig))) throw error;"
+    },
+    {
+      "severity": "high",
+      "title": "Login Rate Limiting IP Address Spoofing Risk",
+      "file": "src/lib/security/rate-limit.ts",
+      "line": 88,
+      "description": "Client IP extraction (lines 86-92) relies on x-forwarded-for header which is user-controlled in many configurations. An attacker can forge x-forwarded-for to bypass login rate limiting by cycling through fake IPs. No validation of proxy chain or trust boundaries.",
+      "recommendation": "Implement proper IP validation: (1) Only trust x-forwarded-for from known proxies, (2) Use X-Real-IP as fallback, (3) Consider implementing account-based rate limiting in addition to IP-based, (4) Validate proxy chain integrity. Example: const trustedProxies = ['cloudflare', 'vercel']; const ip = isTrustedProxy() ? getForwardedIp() : request.socket.remoteAddress;"
+    },
+    {
+      "severity": "high",
+      "title": "Password Validation Regex DoS Vulnerability",
+      "file": "src/lib/auth/password.ts",
+      "line": 35,
+      "description": "Password validation uses regex /[^A-Za-z0-9]/ (negated character class) which could cause ReDoS (Regular Expression Denial of Service) on extremely long passwords combined with the 5000 character sanitization limit. While bcryptjs has built-in limits, explicit validation is weak.",
+      "recommendation": "Use explicit character set check instead of regex: const hasSpecial = '!@#$%^&*()_+-=[]{};\\':\"|,.<>/?'.split('').some(char => password.includes(char)); Also validate password length before processing: if (password.length > 128) return { valid: false, errors: ['Senha muito longa'] };"
+    },
+    {
+      "severity": "high",
+      "title": "MFA Token Verification Does Not Check Timestamp Ordering",
+      "file": "src/lib/auth/mfa.ts",
+      "line": 44,
+      "description": "TOTP verification only allows 30-second tolerance for time drift (epochTolerance: 30) but doesn't prevent replay of valid TOTP codes within the same 30-second window. An attacker with the secret can use the same code multiple times within 30 seconds.",
+      "recommendation": "Implement single-use TOTP enforcement: (1) Store the last-used TOTP timestamp per user, (2) Reject any TOTP from the same time period, (3) Use Redis with key: `totp_used:${userId}:${timeperiod}` with TTL=60s. Example: const timeperiod = Math.floor(Date.now() / 30000); const key = `totp_used:${userId}:${timeperiod}`; if (await redis.exists(key)) throw new Error('TOTP already used'); await redis.setex(key, 60, '1');"
+    },
+    {
+      "severity": "high",
+      "title": "Refresh Token Family ID Not Cryptographically Validated",
+      "file": "src/lib/auth/refresh-token.ts",
+      "line": 47,
+      "description": "Family ID is generated client-side or derived from randomBytes(16).toString('hex') on first token generation but never cryptographically signed. An attacker can forge a family ID to group their tokens with legitimate user sessions, potentially evading breach detection.",
+      "recommendation": "Sign family ID with HMAC: const familyId = crypto.randomBytes(16).toString('hex'); const familySignature = crypto.createHmac('sha256', JWT_SECRET).update(familyId).digest('hex'); Store both and verify signature on reuse: const verified = crypto.timingSafeEqual(Buffer.from(storedSig), Buffer.from(recalculatedSig));"
+    },
+    {
+      "severity": "high",
+      "title": "No Rate Limiting on MFA Verification Endpoints",
+      "file": "src/app/api/auth/mfa/verify/route.ts",
+      "line": 1,
+      "description": "MFA verify endpoint (/api/auth/mfa/verify) has no rate limiting. An attacker can brute-force 6-digit TOTP codes (10^6 possibilities). Only /api/auth/mfa/login has rate limiting (5 requests per 5 minutes, line 16-17 in mfa/login/route.ts).",
+      "recommendation": "Add aggressive rate limiting to verify and disable endpoints: const strictMfaConfig = { windowMs: 60 * 1000, maxRequests: 3 }; Apply to POST /api/auth/mfa/verify, POST /api/auth/mfa/disable, and implement exponential backoff after failures."
+    },
+    {
+      "severity": "high",
+      "title": "Session Fixation Risk in Auth Callback",
+      "file": "src/app/api/auth/exchange/route.ts",
+      "line": 35,
+      "description": "The exchange endpoint (GET /api/auth/exchange?code=XXX) directly sets vigi_token cookie from stored token without regenerating session ID. If attacker obtains a token before user logs in, they can use it after user logs in (session fixation).",
+      "recommendation": "Regenerate session identifiers after login: (1) Use separate session tokens from access tokens, (2) Include login timestamp in JWT, (3) Validate token age on critical operations. Alternative: require additional verification (email click, SMS code) before exchange code is valid."
+    },
+    {
+      "severity": "high",
+      "title": "CRON Secret Transmitted in Plain Authorization Header",
+      "file": "src/middleware.ts",
+      "line": 44,
+      "description": "CRON authentication uses plain Bearer token in Authorization header (line 44) with no HMAC or timestamp validation. If cron jobs use HTTP (not HTTPS), secret is exposed. No replay attack protection.",
+      "recommendation": "Implement HMAC-signed requests for cron: const timestamp = Date.now(); const signature = crypto.createHmac('sha256', CRON_SECRET).update(`${timestamp}`).digest('hex'); Send: Authorization: Bearer ${signature}:${timestamp}; Verify: check timestamp is within 5 minutes and signature matches."
+    },
+    {
+      "severity": "high",
+      "title": "Weak Webhook Idempotency Check Implementation",
+      "file": "src/lib/webhooks/verify.ts",
+      "line": 52,
+      "description": "Webhook idempotency check uses Supabase query without unique constraint on svix_id (line 54-59). If multiple webhook instances process simultaneously, duplicate rows can be inserted. No atomic check-and-insert.",
+      "recommendation": "Use database unique constraint and upsert: ALTER TABLE webhook_processed ADD CONSTRAINT unique_svix_id UNIQUE(svix_id); Then use upsert with conflict handling: ON CONFLICT(svix_id) DO NOTHING;"
+    },
+    {
+      "severity": "medium",
+      "title": "JWT Expiration Time is Long (8 hours)",
+      "file": "src/lib/auth/jwt.ts",
+      "line": 5,
+      "description": "JWT_EXPIRES_IN is set to 8 hours, which is longer than recommended best practices (15-30 minutes access token). Extended validity window increases exposure if token is compromised. Session can be maintained via refresh tokens which expire after 7 days.",
+      "recommendation": "Reduce access token lifetime: Change JWT_EXPIRES_IN from '8h' to '15m' or '30m'. Users will need to refresh more frequently but security posture improves. Use refresh token rotation for session persistence, which is already implemented."
+    },
+    {
+      "severity": "medium",
+      "title": "No Cookie SameSite Policy for Refresh Token",
+      "file": "src/app/api/auth/refresh/route.ts",
+      "line": 65,
+      "description": "Refresh token cookie (vigi_refresh) is set with sameSite: 'lax' (line 68). 'Lax' allows sending cookies on top-level navigations from external sites. Should use 'Strict' for sensitive operations. Access token (vigi_token) also uses 'lax'.",
+      "recommendation": "Change to sameSite: 'strict' for vigi_refresh and consider 'strict' for vigi_token: response.cookies.set('vigi_refresh', newRefresh.token, { httpOnly: true, secure: true, sameSite: 'strict', path: '/', maxAge: 7 * 24 * 60 * 60, });"
+    },
+    {
+      "severity": "medium",
+      "title": "No Content-Security-Policy Headers in Auth Routes",
+      "file": "src/app/api/auth/exchange/route.ts",
+      "line": 40,
+      "description": "Exchange endpoint returns HTML with inline script (line 50) and meta refresh without CSP headers. Vulnerable to inline script injection if redirect parameter is not properly escaped.",
+      "recommendation": "Add CSP header: headers.set('Content-Security-Policy', \"default-src 'none'; meta-refresh 'self';\"); Escape redirect URL using URL constructor validation and DOMPurify: const safePath = new URL(redirect, request.url).pathname;"
+    },
+    {
+      "severity": "medium",
+      "title": "Redirect URL in Exchange Endpoint Not Validated",
+      "file": "src/app/api/auth/exchange/route.ts",
+      "line": 35,
+      "description": "Redirect URL comes directly from consumeExchangeCode result without validation. If redirect parameter is compromised during token creation, users are redirected to attacker sites. No whitelist validation.",
+      "recommendation": "Validate redirect destination: const ALLOWED_REDIRECTS = ['/dashboard', '/admin']; const redirect = result.redirect; if (!ALLOWED_REDIRECTS.some(r => redirect.startsWith(r))) { redirect = '/dashboard'; } Only allow relative paths using URL constructor."
+    },
+    {
+      "severity": "medium",
+      "title": "No HSTS Header for Secure Cookie Transmission",
+      "file": "src/middleware.ts",
+      "line": 1,
+      "description": "While cookies are set with secure: true in production, there's no HTTP Strict-Transport-Security (HSTS) header configured. Browser doesn't enforce HTTPS-only connections, allowing downgrade attacks.",
+      "recommendation": "Add HSTS header in middleware: response.headers.set('Strict-Transport-Security', 'max-age=31536000; includeSubDomains; preload'); This forces browsers to use HTTPS for all future requests."
+    },
+    {
+      "severity": "medium",
+      "title": "MFA Setup Doesn't Require Re-authentication",
+      "file": "src/app/api/auth/mfa/setup/route.ts",
+      "line": 26,
+      "description": "MFA setup only checks if user is authenticated via cookie. No password re-verification required. If attacker gets session cookie, they can disable existing MFA and set up a new one.",
+      "recommendation": "Require password re-authentication: (1) First call to /api/auth/mfa/setup, (2) Return a session token, (3) Client sends password, (4) Verify password, (5) Then generate QR code. This adds extra security for sensitive operations."
+    },
+    {
+      "severity": "medium",
+      "title": "No Account Lockout After MFA Failures",
+      "file": "src/app/api/auth/mfa/login/route.ts",
+      "line": 62,
+      "description": "MFA verification failures (wrong TOTP code) increment no failure counter and don't lock the account. Combined with rate limiting of only 5 attempts per 5 minutes, an attacker has unlimited retries with long wait times.",
+      "recommendation": "Implement progressive lockout: After 5 failed MFA attempts within 30 minutes, require email verification or lock account for 15 minutes. Update users table with mfa_failed_attempts and mfa_locked_until fields."
+    },
+    {
+      "severity": "medium",
+      "title": "File Validation Magic Bytes Check Incomplete",
+      "file": "src/lib/security/file-validation.ts",
+      "line": 136,
+      "description": "Magic bytes validation for PFX/P12 certificates uses only first 2 bytes [0x30, 0x82] which matches any DER sequence. This is insufficient - many file types start with the same bytes. A ZIP file masquerading as PFX might bypass this check.",
+      "recommendation": "Use stricter validation for certificates: (1) Check full DER structure, (2) Verify certificate chain, (3) Check signature algorithm OID, (4) Consider using a library like pkijs or crypto-js for proper validation. Example: const cert = crypto.X509Certificate(buffer); cert.verify(...);"
+    },
+    {
+      "severity": "medium",
+      "title": "Encryption Field Uses User-Controlled Salt Derivation",
+      "file": "src/lib/security/crypto.ts",
+      "line": 14,
+      "description": "Encryption key derivation uses hardcoded SALT 'vigi-field-encryption-v1' for scryptSync. While scrypt is good, no per-field or per-record IV is generated except in encryptField. If the same plaintext is encrypted multiple times, it produces different ciphertexts (good) but the key is always the same (potential issue with key rotation).",
+      "recommendation": "Implement key rotation strategy: (1) Support multiple key versions, (2) Store version in encrypted field header, (3) Implement migration path for re-encryption, (4) Consider using authenticated encryption (GCM already does this). Also add key expiry: const keyVersion = 1; const encrypted = `v${keyVersion}:${encryptedData};`"
+    },
+    {
+      "severity": "medium",
+      "title": "No Protection Against Concurrent Session Hijacking",
+      "file": "src/lib/auth/refresh-token.ts",
+      "line": 95,
+      "description": "When refresh token reuse is detected (line 95), only that family is invalidated (line 101-104). A sophisticated attacker could maintain multiple token families and only expose one, keeping others valid.",
+      "recommendation": "On breach detection, revoke ALL user tokens: await revokeAllRefreshTokens(tokenRecord.user_id); Also implement: (1) Logout on all devices, (2) Force password change, (3) Email user about suspicious activity."
+    },
+    {
+      "severity": "medium",
+      "title": "Billing Gate Exception Has No Audit Trail",
+      "file": "src/lib/security/billing-gate.ts",
+      "line": 70,
+      "description": "Legal exceptions for billing gate (CNV and alvará alerts) bypass billing checks silently without logging. If a company's billing is suspended, these exceptions are auto-granted with no notification to admins.",
+      "recommendation": "Add audit logging: if (isLegalException(operationType)) { await logSecurityEvent({ type: 'billing_gate_exception', company_id: companyId, operation: operationType, timestamp: new Date() }); }"
+    },
+    {
+      "severity": "medium",
+      "title": "No Input Length Validation Before Processing",
+      "file": "src/lib/validation/sanitize.ts",
+      "line": 8,
+      "description": "sanitizeString applies 5000 character limit (line 17: slice(0, maxLength)) but many fields accept longer input before sanitization. If an attacker sends 100MB payload, it may cause DoS before reaching slice.",
+      "recommendation": "Add explicit length check before processing: export function sanitizeString(input: unknown, maxLength: number = 5000): string { if (typeof input !== 'string') return ''; if (input.length > maxLength * 2) throw new Error('Input too large'); return input.trim()... }"
+    },
+    {
+      "severity": "low",
+      "title": "Audit Logging Missing for Password Changes",
+      "file": "src/app/api/auth/change-password/route.ts",
+      "line": 62,
+      "description": "Password change is logged (lines 55-60) but only records that password was changed, not which user initiated the change. If an attacker compromises a session, password history doesn't show who made the change.",
+      "recommendation": "Add more detailed audit logging: await supabase.from('audit_log').insert({ user_id: auth.userId, acao: 'trocar_senha', ip: request.headers.get('x-forwarded-for') || 'unknown', detalhes: { changed_by_user_id: auth.userId, changed_at: new Date().toISOString() }, });"
+    },
+    {
+      "severity": "low",
+      "title": "No X-Frame-Options Header to Prevent Clickjacking",
+      "file": "src/middleware.ts",
+      "line": 1,
+      "description": "Auth pages (especially login and MFA) are not protected with X-Frame-Options header. Attackers can embed login page in invisible iframe for phishing.",
+      "recommendation": "Add X-Frame-Options header in middleware: response.headers.set('X-Frame-Options', 'DENY'); Also add: Pragma: no-cache, Cache-Control: no-store for sensitive pages."
+    },
+    {
+      "severity": "low",
+      "title": "No Protection Against Brute Force on Email Enumeration",
+      "file": "src/app/api/auth/login/route.ts",
+      "line": 39,
+      "description": "Login endpoint returns same error message for 'user not found' and 'wrong password' (line 47-48), which is good. However, response times might differ slightly due to password hashing, allowing user enumeration via timing.",
+      "recommendation": "Ensure constant-time response: Always perform bcrypt.compare() even if user doesn't exist. Use a dummy hash: const dummyHash = await bcrypt.hash('dummy', SALT_ROUNDS); if (!user) { await bcrypt.compare(password, dummyHash); }"
+    },
+    {
+      "severity": "low",
+      "title": "No Rate Limiting on User Creation Endpoint",
+      "file": "src/app/api/auth/users/route.ts",
+      "line": 40,
+      "description": "POST /api/auth/users (create user) uses standard rateLimitConfig.api (100 requests/minute) but should be stricter. Admins could unintentionally create many users.",
+      "recommendation": "Use stricter rate limit: const userCreationConfig = { windowMs: 60 * 1000, maxRequests: 10 }; Apply per-admin-id for better tracking: const key = `user_creation:${adminId}`;"
+    },
+    {
+      "severity": "low",
+      "title": "LGPD Data Export Not Encrypted",
+      "file": "src/lib/lgpd/compliance.ts",
+      "line": 75,
+      "description": "LGPD data export returns base64-encoded JSON as data URL without encryption. If exported data contains PII, it should be encrypted before transmission.",
+      "recommendation": "Encrypt export: const encryptedExport = encryptField(jsonString); return `data:application/octet-stream;base64,${Buffer.from(encryptedExport).toString('base64')};` Also serve with Content-Disposition: attachment; filename=export.json.enc"
+    },
+    {
+      "severity": "low",
+      "title": "No Verification of Email Ownership Before MFA Disabling",
+      "file": "src/app/api/auth/mfa/disable/route.ts",
+      "line": 74,
+      "description": "MFA can be disabled by providing valid TOTP code, but there's no email notification or additional verification step. If attacker has TOTP secret, they can disable MFA silently.",
+      "recommendation": "Send verification email: (1) When MFA disable is requested, (2) User clicks email link, (3) Which generates a short-lived token, (4) Then TOTP verification proceeds, (5) Then MFA is disabled with notification."
+    }
+  ],
+  "summary": "The VIGI PRO authentication system demonstrates solid foundation with bcryptjs (12 rounds), JWT-based auth, and refresh token rotation. However, multiple critical vulnerabilities were identified: CSRF timing attack, weak webhook signature verification, MFA secret stored unverified, exchange store lost on restart, and insufficient IP validation for rate limiting. These should be addressed before production deployment. Medium-severity issues include weak TOTP replay protection, long JWT expiration (8h), and missing password re-auth on MFA setup. The codebase shows good intent (proper sanitization, file validation, LGPD compliance) but execution has gaps. Estimated security score: 62/100 (adequate for early stage, needs hardening for production).",
+  "score": 62,
+  "recommendations_by_priority": [
+    {
+      "priority": "CRITICAL - Fix Before Production",
+      "items": [
+        "Implement constant-time CSRF token comparison (crypto.timingSafeEqual)",
+        "Migrate exchange-store to Redis with proper TTL and multi-instance support",
+        "Make webhook signature verification mandatory (both Asaas and GPS)",
+        "Implement HMAC-SHA256 signatures for all webhook endpoints with timestamp validation",
+        "Move MFA secret to temporary session storage until verification complete",
+        "Validate JWT_SECRET at startup with minimum length enforcement"
+      ]
+    },
+    {
+      "priority": "HIGH - Fix Before Public Access",
+      "items": [
+        "Implement account-based rate limiting in addition to IP-based to prevent spoofing",
+        "Add single-use TOTP enforcement (prevent replay within 30s window)",
+        "Implement rate limiting on MFA verification endpoints (3 attempts/minute)",
+        "Add exponential backoff for authentication failures",
+        "Implement session regeneration on login (prevent session fixation)",
+        "Add HMAC signature verification for cron requests with timestamp validation"
+      ]
+    },
+    {
+      "priority": "MEDIUM - Fix Soon",
+      "items": [
+        "Reduce JWT access token lifetime from 8h to 15-30 minutes",
+        "Change cookie SameSite policy to 'strict' for sensitive operations",
+        "Add CSP headers to auth routes",
+        "Implement redirect URL whitelist validation",
+        "Add HSTS header for HTTPS enforcement",
+        "Require password re-authentication for MFA setup/disable",
+        "Implement account lockout after MFA failures"
+      ]
+    },
+    {
+      "priority": "LOW - Technical Debt",
+      "items": [
+        "Add stronger certificate validation using proper ASN.1 parsing",
+        "Implement key rotation strategy for field encryption",
+        "Improve audit logging detail and coverage",
+        "Add X-Frame-Options and Pragma headers",
+        "Implement constant-time email enumeration protection",
+        "Encrypt LGPD data exports",
+        "Add email verification for MFA disable operations"
+      ]
+    }
+  ],
+  "compliance_notes": {
+    "lgpd": "LGPD compliance module exists but: (1) Data export lacks encryption, (2) No encryption key management for sensitive PII, (3) Anonymization only replaces fields without secure deletion, (4) No retention policy enforcement with automatic deletion.",
+    "psd2": "No PSD2 MFA requirements found despite payment processing (Asaas integration). Should implement SCA (Strong Customer Authentication) for payments.",
+    "owasp": "Implemented protections: (1) Password hashing (bcrypt), (2) CSRF token generation, (3) Input validation (Zod), (4) Rate limiting, (5) SQL injection protection (Supabase ORM). Missing: (1) HTTPS enforcement headers, (2) Constant-time comparisons, (3) Subresource integrity, (4) XXE prevention explicit testing."
+  }
+}
