@@ -86,8 +86,26 @@ const envSchema = z.object({
   VERCEL: z.string().optional().describe("Set by Vercel when deployed"),
 });
 
-// Parse and validate environment at module load time
+// Parse and validate environment
 function parseEnv() {
+  // During Next.js build phase ("Collecting page data"), env vars may not
+  // be available. Skip strict validation and return defaults/empty strings
+  // so the build can complete. Real validation happens at runtime startup.
+  const isBuildPhase =
+    process.env.NEXT_PHASE === "phase-production-build" ||
+    process.env.NEXT_PHASE === "phase-production-server";
+
+  if (isBuildPhase) {
+    // Return a permissive parse that fills defaults but doesn't throw
+    const permissive = envSchema.safeParse(process.env);
+    if (permissive.success) return permissive.data;
+
+    // Fallback: return process.env cast to the expected shape.
+    // Values will be undefined at build time but never actually called.
+    console.warn("[env] Build phase: skipping strict env validation");
+    return process.env as unknown as z.infer<typeof envSchema>;
+  }
+
   const parsed = envSchema.safeParse(process.env);
 
   if (!parsed.success) {
