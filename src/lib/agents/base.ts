@@ -21,7 +21,18 @@ import type {
 // TD-05: Re-export TokenTracker from core module for backward compatibility
 export { TokenTracker, type ITokenTracker } from "@/lib/core/token-tracker";
 
-const supabase = createSupabaseAdmin();
+// Lazy init: avoid calling createSupabaseAdmin() at module load time
+// (breaks Next.js build phase when env vars aren't available)
+let _supabase: ReturnType<typeof createSupabaseAdmin> | null = null;
+function getSupabase() {
+  if (!_supabase) _supabase = createSupabaseAdmin();
+  return _supabase;
+}
+const supabase = new Proxy({} as ReturnType<typeof createSupabaseAdmin>, {
+  get(_target, prop) {
+    return (getSupabase() as Record<string | symbol, unknown>)[prop];
+  },
+});
 
 // --- Run Lifecycle ---
 

@@ -37,7 +37,17 @@ import type {
   EmailTemplateId,
 } from "@/types/database";
 
-const supabase = createSupabaseAdmin();
+// Lazy init: avoid module-level createClient during Next.js build
+let _supabase: ReturnType<typeof createSupabaseAdmin> | null = null;
+function getSupabase() {
+  if (!_supabase) _supabase = createSupabaseAdmin();
+  return _supabase;
+}
+const supabase = new Proxy({} as ReturnType<typeof createSupabaseAdmin>, {
+  get(_target, prop) {
+    return (getSupabase() as Record<string | symbol, unknown>)[prop];
+  },
+});
 
 // --- Constants ---
 
