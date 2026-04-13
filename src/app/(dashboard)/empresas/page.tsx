@@ -21,7 +21,7 @@ import { ExportButton } from "@/components/ui/export-button";
 import { Drawer } from "@/components/ui/drawer";
 import { Timeline, TimelineItem } from "@/components/ui/timeline";
 import { StatCard } from "@/components/ui/stat-card";
-import { PLANOS, PLANO_VALORES } from "@/lib/constants/planos";
+import { PLANO_VALORES } from "@/lib/constants/planos";
 import type { Company } from "@/types/database";
 
 const UFS = [
@@ -791,7 +791,7 @@ export default function EmpresasPage() {
               name="plano"
               label="Plano"
               required
-              options={PLANOS}
+              options={PLANO_OPTIONS}
               defaultValue={editing?.plano || "essencial"}
             />
             <Input

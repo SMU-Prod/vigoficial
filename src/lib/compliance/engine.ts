@@ -2,7 +2,7 @@ import { createSupabaseAdmin } from "@/lib/supabase/server";
 import { addEmailSendJob } from "@/lib/queue/jobs";
 import { checkBillingGate } from "@/lib/security/billing-gate";
 import { diasRestantes } from "@/lib/utils";
-import { notifyComplianceExpiring, notifyComplianceAlert } from "@/lib/services/notification-service";
+import { notifyComplianceExpiring } from "@/lib/services/notification-service";
 
 /**
  * Motor de Compliance — verifica todas as validades de uma empresa
