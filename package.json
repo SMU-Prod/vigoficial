@@ -20,7 +20,7 @@
     "@bull-board/api": "^6.20.6",
     "@bull-board/express": "^6.20.6",
     "@react-email/components": "^1.0.10",
-    "@rolldown/binding-linux-x64-gnu": "^1.0.0-rc.12",
+    "@rolldown/binding-linux-x64-gnu": "^1.0.0-rc.15",
     "@supabase/ssr": "^0.9.0",
     "@supabase/supabase-js": "^2.100.1",
     "bcryptjs": "^3.0.3",
