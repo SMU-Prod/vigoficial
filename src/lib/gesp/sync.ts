@@ -808,8 +808,8 @@ export async function syncEmpresa(companyId: string) {
 
           // Upload prints para R2
           const dateStr = new Date().toISOString().split("T")[0];
-          const printAntesPath = r2Path(companyId, "gesp_prints", `${task.id}-antes.png`, dateStr);
-          const printDepoisPath = r2Path(companyId, "gesp_prints", `${task.id}-depois.png`, dateStr);
+          const printAntesPath = r2Path(companyId, "gesp_prints", `${task.id}-antes.png`, { date: dateStr });
+          const printDepoisPath = r2Path(companyId, "gesp_prints", `${task.id}-depois.png`, { date: dateStr });
 
           await uploadToR2(printAntesPath, resultado.printAntes, "image/png");
           await uploadToR2(printDepoisPath, resultado.printDepois, "image/png");

@@ -1180,7 +1180,7 @@ function QuickBtn({ label, onClick, disabled = false }: { label: string; onClick
 // ============================================================================
 // ProspectEmailsTab — Shows all emails sent/received for a prospect
 // ============================================================================
-function ProspectEmailsTab({ prospectEmail, prospectId }: { prospectEmail?: string; prospectId: string }) {
+function ProspectEmailsTab({ prospectEmail, prospectId: _prospectId }: { prospectEmail?: string; prospectId: string }) {
   const [emails, setEmails] = useState<Array<{
     id: string;
     direction: "inbound" | "outbound";
