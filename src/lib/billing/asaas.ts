@@ -3,6 +3,7 @@ import { addEmailSendJob } from "@/lib/queue/jobs";
 import { env } from "@/lib/config/env"; // OPS-02: Use validated env
 import type { BillingProvider as _BillingProvider } from "@/lib/billing/types";
 import { notifyBillingOverdue, notifySystem } from "@/lib/services/notification-service";
+import { renovarContrato, verificarVencimentosContrato } from "@/lib/services/contract-service";
 
 /**
  * Asaas billing provider implementation.
@@ -180,6 +181,9 @@ export async function billingDiario() {
           .from("companies")
           .update({ data_proxima_cobranca: proximoStr })
           .eq("id", company.id);
+
+        // Renova contrato automaticamente após cobrança
+        await renovarContrato(company.id);
       }
     }
 
@@ -237,7 +241,10 @@ export async function billingDiario() {
     processed++;
   }
 
-  return { processed };
+  // Verificar vencimentos de contrato e enviar alertas
+  const contratoResult = await verificarVencimentosContrato();
+
+  return { processed, contrato_alertas: contratoResult.alertas };
 }
 
 async function enviarTemplateD(company: { id: string; razao_social: string; email_responsavel: string; email_operacional: string; valor_mensal: number; data_proxima_cobranca: string }) {

@@ -32,7 +32,7 @@ export async function POST(
       );
     }
 
-    const planosValidos = ["starter", "professional", "enterprise", "custom"];
+    const planosValidos = ["essencial", "profissional", "enterprise", "custom"];
     if (!planosValidos.includes(plano)) {
       return NextResponse.json({ error: "Plano inválido" }, { status: 400 });
     }

@@ -30,8 +30,8 @@ const UFS = [
 ].map((uf) => ({ value: uf, label: uf }));
 
 const PLANO_OPTIONS = [
-  { value: "starter", label: "Starter" },
-  { value: "professional", label: "Professional" },
+  { value: "essencial", label: "Essencial" },
+  { value: "profissional", label: "Profissional" },
   { value: "enterprise", label: "Enterprise" },
   { value: "custom", label: "Custom" },
 ];
@@ -792,7 +792,7 @@ export default function EmpresasPage() {
               label="Plano"
               required
               options={PLANOS}
-              defaultValue={editing?.plano || "starter"}
+              defaultValue={editing?.plano || "essencial"}
             />
             <Input
               id="valor_mensal"

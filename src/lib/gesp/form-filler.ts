@@ -6,6 +6,47 @@ import * as os from "os";
 import { delay } from "./page-navigator";
 
 /**
+ * Limite de caracteres por campo texto no GESP.
+ * Campos de observação/justificativa aceitam no máximo 999 caracteres.
+ * Textos maiores devem ser divididos com referência a documento complementar.
+ */
+export const GESP_FIELD_CHAR_LIMIT = 999;
+
+/**
+ * Divide texto longo em blocos de até 999 caracteres para campos GESP.
+ * Se o texto excede o limite, o primeiro bloco inclui aviso de continuação
+ * e os blocos restantes são retornados para envio como documento complementar.
+ *
+ * @returns { principal: string; complementares: string[] }
+ */
+export function splitGespField(text: string): { principal: string; complementares: string[] } {
+  if (text.length <= GESP_FIELD_CHAR_LIMIT) {
+    return { principal: text, complementares: [] };
+  }
+
+  const SUFFIX = "\n[CONTINUA EM DOCUMENTO COMPLEMENTAR]";
+  const maxPrincipal = GESP_FIELD_CHAR_LIMIT - SUFFIX.length;
+
+  // Corta no último espaço antes do limite para não quebrar palavras
+  let cutPoint = text.lastIndexOf(" ", maxPrincipal);
+  if (cutPoint <= 0) cutPoint = maxPrincipal;
+
+  const principal = text.slice(0, cutPoint).trimEnd() + SUFFIX;
+  const restante = text.slice(cutPoint).trim();
+
+  // Divide restante em blocos de até 999 chars
+  const complementares: string[] = [];
+  let offset = 0;
+  while (offset < restante.length) {
+    const bloco = restante.slice(offset, offset + GESP_FIELD_CHAR_LIMIT);
+    complementares.push(bloco);
+    offset += GESP_FIELD_CHAR_LIMIT;
+  }
+
+  return { principal, complementares };
+}
+
+/**
  * Gerencia preenchimento de formulários e interações com elementos
  */
 export class FormFiller {
@@ -111,6 +152,28 @@ export class FormFiller {
     }
 
     return null;
+  }
+
+  /**
+   * Preenche campo de texto GESP com limite de 999 caracteres.
+   * Se o texto exceder, preenche o campo principal com aviso e retorna
+   * os blocos complementares para upload como documento anexo.
+   */
+  async fillGespTextField(
+    labelText: string,
+    fullText: string
+  ): Promise<{ complementares: string[] }> {
+    const { principal, complementares } = splitGespField(fullText);
+    await this.fillFormField(labelText, principal);
+
+    if (complementares.length > 0) {
+      logger.info(
+        `[GESP] Campo "${labelText}" excedeu 999 chars. ` +
+        `${complementares.length} bloco(s) complementar(es) gerado(s).`
+      );
+    }
+
+    return { complementares };
   }
 
   /**

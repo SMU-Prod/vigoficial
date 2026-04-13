@@ -13,7 +13,7 @@ export interface CompanyRecord {
   nome_fantasia?: string;
   alvara_numero?: string;
   alvara_validade?: string;
-  plano: "starter" | "professional" | "enterprise" | "custom";
+  plano: "essencial" | "profissional" | "enterprise" | "custom";
   valor_mensal: number;
   billing_status: "trial" | "ativo" | "inadimplente" | "suspenso" | "cancelado";
   data_proxima_cobranca?: string;

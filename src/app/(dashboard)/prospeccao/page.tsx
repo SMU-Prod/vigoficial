@@ -53,12 +53,12 @@ const TEMP_CONFIG: Record<LeadTemperatura, { label: string; color: string; dot: 
 
 const UFS = "AC,AL,AM,AP,BA,CE,DF,ES,GO,MA,MG,MS,MT,PA,PB,PE,PI,PR,RJ,RN,RO,RR,RS,SC,SE,SP,TO".split(",").map(u => ({ value: u, label: u }));
 const PLANOS = [
-  { value: "starter", label: "Starter — R$ 497" },
-  { value: "professional", label: "Professional — R$ 997" },
-  { value: "enterprise", label: "Enterprise — R$ 2.997" },
-  { value: "custom", label: "Custom" },
+  { value: "essencial", label: "Essencial — R$ 1.500" },
+  { value: "profissional", label: "Profissional — R$ 3.000" },
+  { value: "enterprise", label: "Enterprise — R$ 6.000" },
+  { value: "custom", label: "Custom — Negociado" },
 ];
-const PLANO_VALORES: Record<string, number> = { starter: 497, professional: 997, enterprise: 2997, custom: 0 };
+const PLANO_VALORES: Record<string, number> = { essencial: 1500, profissional: 3000, enterprise: 6000, custom: 0 };
 const ACTIVITY_TYPES = [
   { value: "ligacao", label: "📞 Ligação" },
   { value: "email", label: "📧 Email" },
@@ -1052,7 +1052,7 @@ export default function ProspeccaoPage() {
       <Modal open={convertOpen} onClose={() => setConvertOpen(false)} title="Converter em Cliente">
         <form onSubmit={handleConvert} className="space-y-4">
           <p className="text-sm text-[var(--text-secondary)]">Ao converter, uma empresa será criada com status trial.</p>
-          <Select id="plano" name="plano" label="Plano" required options={PLANOS} defaultValue="starter" />
+          <Select id="plano" name="plano" label="Plano" required options={PLANOS} defaultValue="essencial" />
           <Input id="valor_mensal" name="valor_mensal" label="Valor (Custom)" type="number" step="0.01" />
           <div className="flex justify-end gap-3 pt-4 border-t border-t-[var(--border-primary)]">
             <Button variant="secondary" type="button" onClick={() => setConvertOpen(false)}>Cancelar</Button>

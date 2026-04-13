@@ -41,3 +41,13 @@ yarn-error.log*
 # typescript
 *.tsbuildinfo
 next-env.d.ts
+
+# data files (large CSVs)
+*.csv
+
+# generated docs (rebuild on demand)
+AUDITORIA_VIGIPRO_COMPLETA.html
+GUIA_RAILWAY_R2_VIGIPRO.docx
+
+# logs
+/logs

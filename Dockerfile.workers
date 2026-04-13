@@ -1,0 +1,49 @@
+# ──────────────────────────────────────────────────────────────────
+# VIG PRO — Workers Dockerfile
+# Executa os BullMQ workers como processo separado (long-running).
+# NÃO roda no Vercel serverless — deploy em Railway, Render, VPS, etc.
+#
+# IMPORTANTE: O GESP da Polícia Federal exige Mozilla Firefox ESR
+# com certificado digital (e-CNPJ/e-CPF A1). Chromium NÃO é compatível.
+#
+# Build:  docker build -f Dockerfile.workers -t vigipro-workers .
+# Run:    docker run --env-file .env.local vigipro-workers
+# ──────────────────────────────────────────────────────────────────
+
+FROM node:20-slim AS base
+
+# Firefox ESR dependencies para automação GESP (Playwright firefox)
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    # Firefox runtime deps
+    libgtk-3-0 libdbus-glib-1-2 libxt6 libasound2 \
+    libx11-xcb1 libxcomposite1 libxdamage1 libxrandr2 \
+    libpango-1.0-0 libcairo2 libatk1.0-0 \
+    # NSS for certificate handling (e-CNPJ / e-CPF)
+    libnss3 libnss3-tools \
+    # General
+    ca-certificates fonts-liberation wget \
+    && rm -rf /var/lib/apt/lists/*
+
+WORKDIR /app
+
+# ── Install dependencies ──
+COPY package.json package-lock.json* ./
+RUN npm ci --omit=dev && npm cache clean --force
+
+# ── Copy source ──
+COPY tsconfig.json ./
+COPY src/ ./src/
+COPY emails/ ./emails/
+
+# ── Install Playwright Firefox (GESP requer Firefox ESR, não Chromium) ──
+RUN npx playwright install firefox
+RUN npx playwright install-deps firefox
+
+# ── Health check ──
+HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 \
+  CMD node -e "fetch('http://localhost:9090/health').then(r=>{if(!r.ok)throw 1}).catch(()=>process.exit(1))"
+
+EXPOSE 9090
+
+# ── Start workers via tsx ──
+CMD ["npx", "tsx", "src/workers/index.ts"]

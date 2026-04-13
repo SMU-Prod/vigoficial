@@ -306,10 +306,14 @@ export interface Company {
   nome_fantasia: string;
   alvara_numero: string | null;
   alvara_validade: string | null;
-  plano: "starter" | "professional" | "enterprise" | "custom";
+  plano: "essencial" | "profissional" | "enterprise" | "custom";
   valor_mensal: number;
   billing_status: BillingStatus;
   data_proxima_cobranca: string | null;
+  // Contrato
+  contrato_inicio: string | null;
+  contrato_vencimento: string | null; // 30 dias após 1º pagamento
+  contrato_auto_renovacao: boolean;
   habilitada: boolean;
   email_operacional: string;
   email_responsavel: string;
@@ -319,6 +323,8 @@ export interface Company {
   ecpf_senha_encrypted: string | null;
   ecpf_validade: string | null;
   alertas_ativos: Record<string, boolean>;
+  // Vigilante alerts
+  enviar_alerta_vigilante: boolean;
   // Filiais
   matriz_id: string | null;
   tipo_unidade: TipoUnidade;
@@ -965,6 +971,8 @@ export interface GespProcurador {
   company_id: string;
   cpf_procurador: string;
   nome_procurador: string;
+  email_procurador: string | null;
+  telefone_procurador: string | null;
   poderes: "plenos" | "limitados";
   ativo: boolean;
   data_cadastro: string;

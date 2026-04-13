@@ -39,17 +39,45 @@ export async function getFromR2(key: string) {
 }
 
 /**
- * Gera o caminho R2 padronizado conforme Seção 6.6 do PRD
+ * Gera o caminho R2 padronizado por CNPJ.
+ *
+ * Estrutura:
+ *   {cnpj_limpo}/{categoria}/{filename}
+ *   {cnpj_limpo}/{categoria}/{date}/{filename}  (para prints e discrepâncias)
+ *
+ * Fallback: se cnpj não for fornecido, usa companyId (retrocompatibilidade).
  */
 export function r2Path(
   companyId: string,
-  category: "certificados" | "documentos" | "gesp_prints" | "discrepancias" | "emails_gerados" | "billing",
+  category: "certificados" | "documentos" | "gesp_prints" | "discrepancias" | "emails_gerados" | "billing" | "procuracoes" | "contratos",
+  filename: string,
+  options?: { date?: string; cnpj?: string }
+) {
+  const dateStr = options?.date || new Date().toISOString().split("T")[0];
+  const base = options?.cnpj
+    ? `cnpj/${options.cnpj.replace(/\D/g, "")}`
+    : `companies/${companyId}`;
+
+  if (category === "gesp_prints" || category === "discrepancias") {
+    return `${base}/${category}/${dateStr}/${filename}`;
+  }
+  return `${base}/${category}/${filename}`;
+}
+
+/**
+ * Gera path R2 com CNPJ obrigatório.
+ * Uso recomendado para novos uploads — garante organização por CNPJ.
+ */
+export function r2PathByCnpj(
+  cnpj: string,
+  category: string,
   filename: string,
   date?: string
-) {
-  const dateStr = date || new Date().toISOString().split("T")[0];
-  if (category === "gesp_prints" || category === "discrepancias") {
-    return `companies/${companyId}/${category}/${dateStr}/${filename}`;
+): string {
+  const cnpjLimpo = cnpj.replace(/\D/g, "");
+  if (cnpjLimpo.length !== 14) {
+    throw new Error(`CNPJ inválido para path R2: "${cnpj}"`);
   }
-  return `companies/${companyId}/${category}/${filename}`;
+  const dateStr = date || new Date().toISOString().split("T")[0];
+  return `cnpj/${cnpjLimpo}/${category}/${dateStr}/${filename}`;
 }

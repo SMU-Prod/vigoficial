@@ -5,8 +5,8 @@
 
 import { env } from "@/lib/config/env"; // OPS-02
 
-// --- Email (dominio: vigconsultoria.com) ---
-export const EMAIL_DOMAIN = "vigconsultoria.com";
+// --- Email (domínio: vigiconsultoria.com) ---
+export const EMAIL_DOMAIN = "vigiconsultoria.com";
 export const EMAIL_FROM_ATENDIMENTO = env.EMAIL_FROM_ATENDIMENTO || `VIG Consultoria <atendimento@${EMAIL_DOMAIN}>`;
 export const EMAIL_FROM_VIGIPRO = env.EMAIL_FROM_VIGIPRO || `VIG PRO <vigipro@${EMAIL_DOMAIN}>`;
 export const EMAIL_FROM_ADMIN = env.EMAIL_FROM_ADMIN || `Admin VIG PRO <admin@${EMAIL_DOMAIN}>`;
@@ -34,7 +34,8 @@ export const GOV_BR_LOGIN_URL = env.GOV_BR_LOGIN_URL;
 export const DOU_BASE_URL = env.DOU_BASE_URL;
 
 // --- Billing ---
-export const DEFAULT_STARTER_PRICE = 497; // R$497/mês - plano starter
+export const DEFAULT_ESSENCIAL_PRICE = 1500; // R$1.500/mês - plano essencial
+export const ADICIONAL_FILIAL_PRICE = 1000; // R$1.000/mês por filial extra
 
 // --- BullMQ Limites ---
 export const WORKER_LIMITS = {

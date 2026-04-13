@@ -90,7 +90,7 @@ export const companySchema = z.object({
     .transform((v) => v.toLowerCase().trim()),
   telefone: z.string().optional(),
   uf_sede: z.string().length(2, "UF deve ter 2 caracteres"),
-  plano: z.enum(["starter", "professional", "enterprise", "custom"]).default("starter"),
+  plano: z.enum(["essencial", "profissional", "enterprise", "custom"]).default("essencial"),
   valor_mensal: z.number().positive().default(497),
   alvara_numero: z.string().optional(),
   alvara_validade: z.string().optional(),
@@ -280,8 +280,8 @@ export const billingSchema = z.object({
   company_id: z.string().uuid(),
   valor: z.number().positive("Valor deve ser positivo"),
   plano: z
-    .enum(["starter", "professional", "enterprise", "custom"])
-    .default("starter"),
+    .enum(["essencial", "profissional", "enterprise", "custom"])
+    .default("essencial"),
   status: z
     .enum(["trial", "ativo", "inadimplente", "suspenso", "cancelado"])
     .default("ativo"),

@@ -59,7 +59,7 @@ export class PageNavigator {
           signal: controller.signal,
           headers: {
             "User-Agent":
-              "VIG-PRO-Compliance-Bot/1.0 (compliance automation; contato@vigconsultoria.com)",
+              "VIG-PRO-Compliance-Bot/1.0 (compliance automation; contato@vigiconsultoria.com)",
             Accept: "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
             "Accept-Language": "pt-BR,pt;q=0.9,en;q=0.8",
           },

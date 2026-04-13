@@ -94,7 +94,7 @@ export default function UsuariosPage() {
 
     const form = new FormData(e.currentTarget);
     const emailPrefix = form.get("email_prefix");
-    const email = `${emailPrefix}@vigconsultoria.com`;
+    const email = `${emailPrefix}@vigiconsultoria.com`;
 
     const body = {
       email,
@@ -377,7 +377,7 @@ export default function UsuariosPage() {
                 className="flex-1"
               />
               <span className="text-[var(--text-secondary)] font-medium">
-                @vigconsultoria.com
+                @vigiconsultoria.com
               </span>
             </div>
           </div>

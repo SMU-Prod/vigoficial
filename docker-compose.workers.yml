@@ -1,0 +1,59 @@
+# ──────────────────────────────────────────────────────────────────
+# VIG PRO — Docker Compose para Workers
+#
+# Uso:
+#   docker compose -f docker-compose.workers.yml up -d
+#   docker compose -f docker-compose.workers.yml logs -f workers
+#
+# O Next.js app continua no Vercel. Este compose roda APENAS os workers.
+# Redis pode ser externo (Railway, Upstash, etc.) ou local (descomente).
+# ──────────────────────────────────────────────────────────────────
+
+version: "3.8"
+
+services:
+  workers:
+    build:
+      context: .
+      dockerfile: Dockerfile.workers
+    container_name: vigipro-workers
+    restart: unless-stopped
+    env_file:
+      - .env.local
+    ports:
+      - "9090:9090"
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://localhost:9090/health').then(r=>{if(!r.ok)throw 1}).catch(()=>process.exit(1))"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 15s
+    deploy:
+      resources:
+        limits:
+          memory: 512M
+          cpus: "1.0"
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+  # ── Redis local (descomente se não usar Redis externo) ──
+  # redis:
+  #   image: redis:7-alpine
+  #   container_name: vigipro-redis
+  #   restart: unless-stopped
+  #   ports:
+  #     - "6379:6379"
+  #   volumes:
+  #     - redis-data:/data
+  #   command: redis-server --appendonly yes --maxmemory 128mb --maxmemory-policy allkeys-lru
+  #   healthcheck:
+  #     test: ["CMD", "redis-cli", "ping"]
+  #     interval: 10s
+  #     timeout: 3s
+  #     retries: 3
+
+# volumes:
+#   redis-data:

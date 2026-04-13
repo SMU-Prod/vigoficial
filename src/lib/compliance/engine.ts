@@ -321,6 +321,7 @@ export async function runComplianceCheck(companyId: string): Promise<ComplianceR
     // ──── STEP 6: Send appropriate email templates ────
     for (const alerta of alertas) {
       try {
+        // 6a. Alerta para o responsável da empresa (sempre)
         await addEmailSendJob({
           companyId,
           templateId: alerta.template,
@@ -337,6 +338,28 @@ export async function runComplianceCheck(companyId: string): Promise<ComplianceR
           },
         });
         result.alertas_enviados++;
+
+        // 6b. Alerta para o vigilante (quando autorizado pelo cliente)
+        if (company.enviar_alerta_vigilante && alerta.campo !== "alvara") {
+          const emp = employees?.find((e) => e.id === alerta.entidade || e.nome_completo === alerta.entidade);
+          if (emp?.email && emp?.receber_alertas) {
+            await addEmailSendJob({
+              companyId,
+              templateId: alerta.template,
+              mode: "CLIENTE_HTML",
+              to: emp.email,
+              subject: `[VIG PRO] Alerta: ${alerta.tipo} — ${alerta.dias} dias para vencimento`,
+              payload: {
+                razaoSocial: company.razao_social,
+                tipoDocumento: alerta.tipo,
+                entidadeNome: emp.nome_completo,
+                dataValidade: alerta.dataValidade,
+                diasRestantes: alerta.dias,
+                severidade: alerta.severidade,
+              },
+            });
+          }
+        }
 
         // In-app notification for compliance alert
         notifyComplianceExpiring(
