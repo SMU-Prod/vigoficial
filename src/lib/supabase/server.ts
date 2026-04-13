@@ -35,16 +35,41 @@ export async function createSupabaseServer() {
  * - Server Actions
  * - Workers BullMQ
  * NUNCA expor no client-side
+ *
+ * Build-safe: durante `next build` (Collecting page data) as env vars
+ * podem não existir. Retorna um Proxy stub que nunca será chamado no build.
  */
+let _adminClient: ReturnType<typeof createClient> | null = null;
+
 export function createSupabaseAdmin() {
-  return createClient(
-    env.NEXT_PUBLIC_SUPABASE_URL,
-    env.SUPABASE_SERVICE_ROLE_KEY,
-    {
-      auth: {
-        autoRefreshToken: false,
-        persistSession: false,
+  // Singleton: reutiliza a mesma instância
+  if (_adminClient) return _adminClient;
+
+  const url = env.NEXT_PUBLIC_SUPABASE_URL;
+  const key = env.SUPABASE_SERVICE_ROLE_KEY;
+
+  // Durante o build phase do Next.js, env vars são undefined.
+  // Retorna proxy stub — nunca será chamado em build, só em runtime.
+  if (!url || !key) {
+    return new Proxy({} as ReturnType<typeof createClient>, {
+      get(_target, prop) {
+        // Permite typeof checks e toString sem explodir
+        if (prop === Symbol.toPrimitive || prop === "toString" || prop === "valueOf") {
+          return () => "[SupabaseBuildStub]";
+        }
+        // Retorna função no-op para chamadas encadeadas (.from().select() etc)
+        return (..._args: unknown[]) =>
+          new Proxy({}, { get: () => () => ({ data: null, error: null }) });
       },
-    }
-  );
+    });
+  }
+
+  _adminClient = createClient(url, key, {
+    auth: {
+      autoRefreshToken: false,
+      persistSession: false,
+    },
+  });
+
+  return _adminClient;
 }
