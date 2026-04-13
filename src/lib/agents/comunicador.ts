@@ -45,7 +45,7 @@ function getSupabase() {
 }
 const supabase = new Proxy({} as ReturnType<typeof createSupabaseAdmin>, {
   get(_target, prop) {
-    return (getSupabase() as Record<string | symbol, unknown>)[prop];
+    return (getSupabase() as unknown as Record<string | symbol, unknown>)[prop];
   },
 });
 
