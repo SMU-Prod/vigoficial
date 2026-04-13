@@ -414,6 +414,7 @@ export interface Employee {
   uf_trabalho: string | null;
   // Controle de alertas
   alertas_ativos: Record<string, boolean>;
+  receber_alertas: boolean;
   // Campos GESP/XSD Import
   pis: string | null; // XSD: 11 dígitos numéricos ou "0"
   vinculo_empregaticio: GespVinculoEmpregaticio | null; // XSD: 1=Vigilante, 2=Supervisor, 3=Instrutor, 9=Outros

@@ -114,7 +114,7 @@ export async function runComplianceCheck(companyId: string): Promise<ComplianceR
     const { data: employees, error: empError } = await supabase
       .from("employees")
       .select(
-        "id, nome_completo, cnv_data_validade, reciclagem_data_validade, porte_arma_validade, colete_data_validade, alertas_ativos"
+        "id, nome_completo, email, receber_alertas, cnv_data_validade, reciclagem_data_validade, porte_arma_validade, colete_data_validade, alertas_ativos"
       )
       .eq("company_id", companyId)
       .eq("status", "ativo");

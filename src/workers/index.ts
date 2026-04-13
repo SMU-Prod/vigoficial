@@ -26,15 +26,8 @@ import { billingDiario } from "../lib/billing/asaas";
 import { WORKER_LIMITS } from "../lib/config/constants";
 import { EMAIL_EQUIPE } from "../lib/config/constants";
 import {
-  notifyEmailReceived,
   notifyGespCompleted,
   notifyGespError,
-  notifyComplianceExpiring,
-  notifyAgentCompleted,
-  notifyAgentError,
-  notifyFleetAlert,
-  notifyWorkflowCreated,
-  notifySystem,
 } from "../lib/services/notification-service";
 
 // Configuration flag for Gmail polling fallback

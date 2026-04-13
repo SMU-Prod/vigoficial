@@ -6,6 +6,14 @@
 # IMPORTANTE: O GESP da Polícia Federal exige Mozilla Firefox ESR
 # com certificado digital (e-CNPJ/e-CPF A1). Chromium NÃO é compatível.
 #
+# ── RAILWAY ──
+# No Railway, crie um serviço separado para workers:
+#   Settings → Build → Builder: Dockerfile
+#   Settings → Build → Dockerfile Path: Dockerfile.workers
+#   Settings → Deploy → Health Check Path: /health
+# NÃO use railway.toml (ele afeta TODOS os serviços do repo).
+#
+# ── Local ──
 # Build:  docker build -f Dockerfile.workers -t vigipro-workers .
 # Run:    docker run --env-file .env.local vigipro-workers
 # ──────────────────────────────────────────────────────────────────
@@ -28,7 +36,8 @@ WORKDIR /app
 
 # ── Install dependencies ──
 COPY package.json package-lock.json* ./
-RUN npm ci --omit=dev && npm cache clean --force
+# NÃO usar --omit=dev: tsx e playwright são devDeps mas necessários em runtime
+RUN npm ci && npm cache clean --force
 
 # ── Copy source ──
 COPY tsconfig.json ./
