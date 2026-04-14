@@ -88,7 +88,9 @@ export async function verifyCronAuth(
     return { valid: false, error: "Invalid Authorization header format" };
   }
 
-  const colonIdx = parts[1].indexOf(":");
+  // Use lastIndexOf: ISO 8601 timestamps contain colons (e.g. 2026-04-14T04:40:32Z)
+  // but HMAC hex digests never do, so the last colon is always the separator.
+  const colonIdx = parts[1].lastIndexOf(":");
   if (colonIdx === -1) {
     return { valid: false, error: "Missing timestamp or HMAC in Authorization header" };
   }
