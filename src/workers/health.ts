@@ -11,7 +11,9 @@
 import { createServer, IncomingMessage, ServerResponse } from "http";
 import type { Worker } from "bullmq";
 
-const HEALTH_PORT = parseInt(process.env.WORKER_HEALTH_PORT || "9090");
+// Railway injects PORT env var — must listen on it for health checks to work.
+// Fallback: WORKER_HEALTH_PORT → 9090 (for local/docker development)
+const HEALTH_PORT = parseInt(process.env.PORT || process.env.WORKER_HEALTH_PORT || "9090");
 const HEARTBEAT_INTERVAL = 30_000; // 30s
 const HEARTBEAT_STALE_THRESHOLD = 90_000; // 90s sem heartbeat = stale
 

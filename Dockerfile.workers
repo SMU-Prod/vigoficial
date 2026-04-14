@@ -37,7 +37,7 @@ WORKDIR /app
 # ── Install dependencies ──
 COPY package.json package-lock.json* ./
 # NÃO usar --omit=dev: tsx e playwright são devDeps mas necessários em runtime
-RUN npm ci && npm cache clean --force
+RUN npm ci --legacy-peer-deps && npm cache clean --force
 
 # ── Copy source ──
 COPY tsconfig.json ./

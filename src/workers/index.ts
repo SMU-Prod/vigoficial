@@ -37,9 +37,11 @@ const supabase = createSupabaseAdmin();
 const redis = new Redis({
   host: (redisConnection as Record<string, unknown>).host as string || "127.0.0.1",
   port: (redisConnection as Record<string, unknown>).port as number || 6379,
-  password: (redisConnection as Record<string, unknown>).password as string | undefined,
+  password: (redisConnection as Record<string, unknown>).password as string || undefined,
   maxRetriesPerRequest: null,
 });
+
+console.log(`[WORKERS] Redis connecting to ${(redisConnection as Record<string, unknown>).host}:${(redisConnection as Record<string, unknown>).port}`);
 
 // ─────────────────────────────────────────────────────────────────────
 // DOU Worker (concurrency: 1)
