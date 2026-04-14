@@ -68,13 +68,18 @@ jobs:
           ENDPOINT: ${{ steps.route.outputs.endpoint }}
         run: |
           URL="$APP_URL/api/cron/$ENDPOINT"
+          # health-check é GET; demais rotas são POST
+          case "$ENDPOINT" in
+            health-check) METHOD="GET" ;;
+            *)            METHOD="POST" ;;
+          esac
           # HMAC-SHA256 auth: Authorization: CRON-HMAC-SHA256 <iso_timestamp>:<hex_hmac>
           TIMESTAMP=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
           HMAC=$(printf '%s' "$TIMESTAMP" | openssl dgst -sha256 -hmac "$CRON_SECRET" -hex | awk '{print $NF}')
           AUTH="CRON-HMAC-SHA256 $TIMESTAMP:$HMAC"
-          echo "POST $URL (ts=$TIMESTAMP)"
+          echo "$METHOD $URL (ts=$TIMESTAMP)"
           HTTP_CODE=$(curl -sS -o /tmp/body.txt -w "%{http_code}" \
-            -X POST "$URL" \
+            -X "$METHOD" "$URL" \
             -H "Authorization: $AUTH" \
             -H "Content-Type: application/json" \
             --max-time 300)
