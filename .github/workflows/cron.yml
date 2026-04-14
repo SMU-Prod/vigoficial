@@ -62,12 +62,20 @@ jobs:
           fi
 
       - name: Chamar /api/cron/${{ steps.route.outputs.endpoint }}
+        env:
+          CRON_SECRET: ${{ secrets.CRON_SECRET }}
+          APP_URL: ${{ secrets.APP_URL }}
+          ENDPOINT: ${{ steps.route.outputs.endpoint }}
         run: |
-          URL="${{ secrets.APP_URL }}/api/cron/${{ steps.route.outputs.endpoint }}"
-          echo "POST $URL"
+          URL="$APP_URL/api/cron/$ENDPOINT"
+          # HMAC-SHA256 auth: Authorization: CRON-HMAC-SHA256 <iso_timestamp>:<hex_hmac>
+          TIMESTAMP=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
+          HMAC=$(printf '%s' "$TIMESTAMP" | openssl dgst -sha256 -hmac "$CRON_SECRET" -hex | awk '{print $NF}')
+          AUTH="CRON-HMAC-SHA256 $TIMESTAMP:$HMAC"
+          echo "POST $URL (ts=$TIMESTAMP)"
           HTTP_CODE=$(curl -sS -o /tmp/body.txt -w "%{http_code}" \
             -X POST "$URL" \
-            -H "Authorization: Bearer ${{ secrets.CRON_SECRET }}" \
+            -H "Authorization: $AUTH" \
             -H "Content-Type: application/json" \
             --max-time 300)
           echo "HTTP $HTTP_CODE"
