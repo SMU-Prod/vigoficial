@@ -5,8 +5,8 @@
 
 import { env } from "@/lib/config/env"; // OPS-02
 
-// --- Email (domínio: vigiconsultoria.com) ---
-export const EMAIL_DOMAIN = "vigiconsultoria.com";
+// --- Email (domínio verificado no Resend: vigconsultoria.com — SEM "i") ---
+export const EMAIL_DOMAIN = "vigconsultoria.com";
 export const EMAIL_FROM_ATENDIMENTO = env.EMAIL_FROM_ATENDIMENTO || `VIG Consultoria <atendimento@${EMAIL_DOMAIN}>`;
 export const EMAIL_FROM_VIGIPRO = env.EMAIL_FROM_VIGIPRO || `VIG PRO <vigipro@${EMAIL_DOMAIN}>`;
 export const EMAIL_FROM_ADMIN = env.EMAIL_FROM_ADMIN || `Admin VIG PRO <admin@${EMAIL_DOMAIN}>`;

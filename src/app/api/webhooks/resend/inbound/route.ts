@@ -7,7 +7,7 @@ import { isProspectReply } from "@/lib/agents/prospect-reply";
 import { env } from "@/lib/config/env";
 import { notifyEmailReceived } from "@/lib/services/notification-service";
 
-const DOMAIN = "vigiconsultoria.com";
+const DOMAIN = "vigconsultoria.com";
 const ATENDIMENTO = `atendimento@${DOMAIN}`;
 const VIGIPRO = `vigipro@${DOMAIN}`;
 
@@ -27,7 +27,7 @@ interface ResendInboundEvent {
 
 /**
  * POST /api/webhooks/resend/inbound — Email router
- * Processa emails recebidos em @vigiconsultoria.com
+ * Processa emails recebidos em @vigconsultoria.com
  * Regra R2: Salva IMEDIATAMENTE em email_inbound
  */
 export async function POST(request: NextRequest) {
@@ -142,7 +142,7 @@ export async function POST(request: NextRequest) {
       );
     } else if (toAddr === VIGIPRO) {
       // Admin confirmation (só se from admin@)
-      if (data.from_addr.toLowerCase().endsWith("@vigiconsultoria.com")) {
+      if (data.from_addr.toLowerCase().endsWith("@vigconsultoria.com")) {
         await emailQueue.add(
           "inbound.admin-confirmation",
           {
@@ -155,7 +155,7 @@ export async function POST(request: NextRequest) {
         );
       }
     } else if (toAddr.endsWith(`@${DOMAIN}`)) {
-      // User email (usuario@vigiconsultoria.com)
+      // User email (usuario@vigconsultoria.com)
       const usuario = toAddr.split("@")[0];
       await emailQueue.add(
         "inbound.user",

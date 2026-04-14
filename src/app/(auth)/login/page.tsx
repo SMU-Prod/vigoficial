@@ -164,7 +164,7 @@ export default function LoginPage() {
               onChange={(e) => setEmail(e.target.value)}
               required
               className="mt-1 block w-full rounded-md border border-[var(--border-primary)] px-3 py-2 shadow-sm text-[var(--text-primary)] bg-[var(--bg-secondary)] focus:border-[var(--vigi-gold)] focus:outline-none focus:ring-1 focus:ring-[var(--vigi-gold)]"
-              placeholder="seu.email@vigiconsultoria.com"
+              placeholder="seu.email@vigconsultoria.com"
             />
           </div>
 

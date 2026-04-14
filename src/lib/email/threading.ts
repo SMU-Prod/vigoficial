@@ -8,12 +8,12 @@ import {
 } from "@/types/database";
 
 const EXCLUDED_EMAILS = [
-  "admin@vigiconsultoria.com",
-  "vigipro@vigiconsultoria.com",
-  "atendimento@vigiconsultoria.com",
+  "admin@vigconsultoria.com",
+  "vigipro@vigconsultoria.com",
+  "atendimento@vigconsultoria.com",
 ];
 
-const INTERNAL_DOMAIN = "@vigiconsultoria.com";
+const INTERNAL_DOMAIN = "@vigconsultoria.com";
 
 function isValidEmail(email: string): boolean {
   const re = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
