@@ -81,6 +81,7 @@ jobs:
           HTTP_CODE=$(curl -sS -o /tmp/body.txt -w "%{http_code}" \
             -X "$METHOD" "$URL" \
             -H "Authorization: $AUTH" \
+            -H "x-cron-secret: $CRON_SECRET" \
             -H "Content-Type: application/json" \
             --max-time 300)
           echo "HTTP $HTTP_CODE"
