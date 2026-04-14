@@ -83,20 +83,22 @@ interface AgentControlState {
 
 // ─── Helpers ───
 
-function formatDuration(ms: number | null): string {
-  if (ms === null || ms === undefined) return "—";
+function formatDuration(ms: number | null | undefined): string {
+  if (ms === null || ms === undefined || Number.isNaN(ms)) return "—";
   if (ms < 1000) return `${ms}ms`;
   if (ms < 60000) return `${(ms / 1000).toFixed(1)}s`;
   return `${(ms / 60000).toFixed(1)}min`;
 }
 
-function formatCost(usd: number): string {
+function formatCost(usd: number | null | undefined): string {
+  if (usd === null || usd === undefined || Number.isNaN(usd)) return "—";
   if (usd === 0) return "$0.00";
   if (usd < 0.01) return `$${usd.toFixed(4)}`;
   return `$${usd.toFixed(2)}`;
 }
 
-function formatTokens(tokens: number): string {
+function formatTokens(tokens: number | null | undefined): string {
+  if (tokens === null || tokens === undefined || Number.isNaN(tokens)) return "—";
   if (tokens === 0) return "0";
   if (tokens < 1000) return tokens.toString();
   if (tokens < 1000000) return `${(tokens / 1000).toFixed(1)}k`;
@@ -364,7 +366,7 @@ export default function AgentesPage() {
         {[
           { label: "Custo 24h", value: formatCost(costs.totalUsd) },
           { label: "Tokens 24h", value: formatTokens(costs.totalTokens) },
-          { label: "Cache Hit Rate", value: `${(costs.cacheHitRate * 100).toFixed(1)}%` },
+          { label: "Cache Hit Rate", value: `${((costs.cacheHitRate ?? 0) * 100).toFixed(1)}%` },
           { label: "Runs Ativos", value: String(activeRuns.length), highlight: activeRuns.length > 0 },
           { label: "Saúde", custom: true },
         ].map((kpi, i) => (
@@ -610,7 +612,7 @@ export default function AgentesPage() {
                       <td className="py-2.5 px-3 max-w-[200px] truncate" style={{ color: "var(--text-secondary)" }} title={d.input_summary}>{d.input_summary}</td>
                       <td className="py-2.5 px-3 max-w-[200px] truncate" style={{ color: "var(--text-secondary)" }} title={d.output_summary}>{d.output_summary}</td>
                       <td className="py-2.5 px-3">
-                        {d.confidence !== null ? (
+                        {d.confidence !== null && d.confidence !== undefined ? (
                           <span className="font-mono text-[12px] font-medium" style={{
                             color: d.confidence >= 0.7 ? "var(--status-success)" : d.confidence >= 0.5 ? "var(--status-warning)" : "var(--status-danger)",
                           }}>

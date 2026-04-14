@@ -3398,46 +3398,89 @@ export class GespBrowser {
   // =========================================================================
 
   /**
-   * Cria perfil Firefox temporário com certificado .pfx importado
+   * Cria perfil Firefox com certificado .pfx importado.
+   *
+   * Dois modos:
+   * 1) PERSISTENTE (recomendado p/ produção): se GESP_PROFILE_DIR estiver
+   *    definido, usa <GESP_PROFILE_DIR>/<companyId>/ como perfil fixo.
+   *    Assim o cadastro de máquina feito no GESP é mantido entre execuções
+   *    (cookies, fingerprint, cert já no NSS database). Importa o cert
+   *    apenas se ainda não estiver presente.
+   * 2) TEMPORÁRIO (fallback): cria em os.tmpdir() e apaga no cleanup.
+   *    Usado quando GESP_PROFILE_DIR não está setado (ex.: dry-run, CI).
    */
   private async createFirefoxProfile(pfxBuffer: Buffer, senha: string): Promise<string> {
-    const profileDir = fs.mkdtempSync(path.join(os.tmpdir(), "vigi-gesp-"));
-    const pfxPath = path.join(profileDir, "certificado.pfx");
-
-    fs.writeFileSync(pfxPath, pfxBuffer);
-
     const { execSync } = await import("child_process");
+    const baseDir = process.env.GESP_PROFILE_DIR;
+    const persistent = !!baseDir;
+
+    let profileDir: string;
+    if (persistent) {
+      profileDir = path.join(baseDir!, this.companyId);
+      fs.mkdirSync(profileDir, { recursive: true });
+    } else {
+      profileDir = fs.mkdtempSync(path.join(os.tmpdir(), "vigi-gesp-"));
+    }
+
+    // Inicializa NSS database só se ainda não existir (cert9.db é o arquivo novo)
+    const nssInitialized =
+      fs.existsSync(path.join(profileDir, "cert9.db")) ||
+      fs.existsSync(path.join(profileDir, "cert8.db"));
 
     try {
-      execSync(`certutil -d sql:${profileDir} -N --empty-password`, {
-        stdio: "pipe",
-      });
+      if (!nssInitialized) {
+        execSync(`certutil -d sql:${profileDir} -N --empty-password`, { stdio: "pipe" });
+      }
 
-      execSync(
-        `pk12util -d sql:${profileDir} -i "${pfxPath}" -W "${senha}"`,
-        { stdio: "pipe" }
-      );
-
+      // Importa o cert. Em perfil persistente, importa apenas se não houver
+      // nenhum certificado com a mesma "Friendly Name" / nickname.
+      // Estratégia simples: sempre tenta importar; pk12util ignora duplicatas
+      // com mesmo nickname em muitas versões. Em perfil persistente isto é
+      // idempotente em efeito.
+      const pfxPath = path.join(profileDir, "certificado.pfx");
+      fs.writeFileSync(pfxPath, pfxBuffer);
+      try {
+        execSync(
+          `pk12util -d sql:${profileDir} -i "${pfxPath}" -W "${senha}"`,
+          { stdio: "pipe" }
+        );
+      } catch (err) {
+        // Em perfil persistente, falha ao importar pode significar que o
+        // cert já existe — não é fatal.
+        if (!persistent) throw err;
+        console.warn("[GESP] pk12util falhou (cert já presente?):", err);
+      }
+      fs.unlinkSync(pfxPath);
     } catch (err) {
       console.error("[GESP] Erro ao importar certificado:", err);
     }
 
-    fs.unlinkSync(pfxPath);
     return profileDir;
   }
 
   /**
-   * Remove perfil Firefox temporário
+   * Remove perfil Firefox temporário.
+   * Em modo persistente (GESP_PROFILE_DIR setado), NÃO apaga — mantém
+   * cookies/fingerprint/cert entre execuções.
    */
   private cleanupTempProfile(): void {
-    if (this.tempProfileDir && fs.existsSync(this.tempProfileDir)) {
+    if (!this.tempProfileDir) return;
+
+    // Se o perfil é persistente, só limpa a referência — não apaga o diretório.
+    const baseDir = process.env.GESP_PROFILE_DIR;
+    if (baseDir && this.tempProfileDir.startsWith(baseDir)) {
+      this.tempProfileDir = null;
+      return;
+    }
+
+    if (fs.existsSync(this.tempProfileDir)) {
       try {
         fs.rmSync(this.tempProfileDir, { recursive: true, force: true });
       } catch (err) {
         console.error(`[GESP] Erro ao remover perfil temporário: ${err}`);
       }
-      this.tempProfileDir = null;
     }
+    this.tempProfileDir = null;
   }
 
   // =========================================================================

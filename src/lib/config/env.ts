@@ -79,6 +79,7 @@ const envSchema = z.object({
 
   // ──── Feature Flags ────
   GESP_DRY_RUN: z.enum(["true", "false"]).default("false").describe("Simulate GESP execution without browser"),
+  GESP_PROFILE_DIR: z.string().optional().describe("Persistent Firefox profile dir base (e.g. /var/lib/vigipro/firefox). When set, profiles per-company persist across runs — required for GESP machine binding."),
   EMAIL_REDIRECT_TO: z.string().email().optional().describe("Redirect all emails to address (testing in production)"),
 
   // ──── Node / Runtime ────
