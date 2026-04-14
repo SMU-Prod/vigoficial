@@ -48,7 +48,7 @@ export async function PUT(request: NextRequest) {
   const supabase = createSupabaseAdmin();
   const { data, error } = await supabase
     .from("delesp_contacts")
-    .update(updateData)
+    .update(updateData as Record<string, unknown>)
     .eq("id", id)
     .select()
     .single();

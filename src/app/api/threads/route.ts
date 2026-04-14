@@ -129,7 +129,7 @@ export async function POST(request: NextRequest) {
 
     const { data: insertedThread, error: dbError } = await supabase
       .from("threads")
-      .insert(threadData)
+      .insert(threadData as Record<string, unknown>)
       .select()
       .single();
 

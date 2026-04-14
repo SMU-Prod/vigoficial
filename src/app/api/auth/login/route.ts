@@ -88,7 +88,7 @@ export async function POST(request: NextRequest) {
 
       await supabase
         .from("users")
-        .update(updateData)
+        .update(updateData as Record<string, unknown>)
         .eq("id", user.id);
 
       return NextResponse.json(

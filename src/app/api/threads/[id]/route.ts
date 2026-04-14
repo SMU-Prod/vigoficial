@@ -150,7 +150,7 @@ export async function PATCH(
 
     const { data: updatedThread, error: updateError } = await supabase
       .from("threads")
-      .update(updateData)
+      .update(updateData as Record<string, unknown>)
       .eq("id", id)
       .select()
       .single();

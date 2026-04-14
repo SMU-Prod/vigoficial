@@ -88,7 +88,7 @@ export async function PUT(
 
   const { data: updatedData, error: dbError } = await supabase
     .from("employees")
-    .update(updateData)
+    .update(updateData as Record<string, unknown>)
     .eq("id", id)
     .select()
     .single();
