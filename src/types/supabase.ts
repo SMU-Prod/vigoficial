@@ -213,25 +213,37 @@ export type Database = {
       }
       audit_log: {
         Row: {
-          acao: string
+          acao: string | null
+          action: string | null
           created_at: string
+          details: Json | null
           detalhes: Json | null
+          entity_id: string | null
+          entity_type: string | null
           id: string
           ip: string | null
           user_id: string | null
         }
         Insert: {
-          acao: string
+          acao?: string | null
+          action?: string | null
           created_at?: string
+          details?: Json | null
           detalhes?: Json | null
+          entity_id?: string | null
+          entity_type?: string | null
           id?: string
           ip?: string | null
           user_id?: string | null
         }
         Update: {
-          acao?: string
+          acao?: string | null
+          action?: string | null
           created_at?: string
+          details?: Json | null
           detalhes?: Json | null
+          entity_id?: string | null
+          entity_type?: string | null
           id?: string
           ip?: string | null
           user_id?: string | null
@@ -311,21 +323,29 @@ export type Database = {
           cnae_principal: string | null
           cnpj: string
           complemento: string | null
+          contrato_auto_renovacao: boolean
+          contrato_inicio: string | null
+          contrato_vencimento: string | null
           created_at: string
           data_abertura: string | null
           data_proxima_cobranca: string | null
           ecpf_r2_path: string | null
           ecpf_senha_encrypted: string | null
           ecpf_validade: string | null
+          email_contato: string | null
           email_operacional: string
           email_responsavel: string
           enriched_at: string | null
+          enviar_alerta_vigilante: boolean
           habilitada: boolean
           id: string
+          last_payment_date: string | null
           logradouro: string | null
           matriz_id: string | null
+          monthly_cost: number | null
           municipio: string | null
           natureza_juridica: string | null
+          next_billing_date: string | null
           nome_fantasia: string | null
           numero: string | null
           plano: string
@@ -352,21 +372,29 @@ export type Database = {
           cnae_principal?: string | null
           cnpj: string
           complemento?: string | null
+          contrato_auto_renovacao?: boolean
+          contrato_inicio?: string | null
+          contrato_vencimento?: string | null
           created_at?: string
           data_abertura?: string | null
           data_proxima_cobranca?: string | null
           ecpf_r2_path?: string | null
           ecpf_senha_encrypted?: string | null
           ecpf_validade?: string | null
+          email_contato?: string | null
           email_operacional: string
           email_responsavel: string
           enriched_at?: string | null
+          enviar_alerta_vigilante?: boolean
           habilitada?: boolean
           id?: string
+          last_payment_date?: string | null
           logradouro?: string | null
           matriz_id?: string | null
+          monthly_cost?: number | null
           municipio?: string | null
           natureza_juridica?: string | null
+          next_billing_date?: string | null
           nome_fantasia?: string | null
           numero?: string | null
           plano?: string
@@ -393,21 +421,29 @@ export type Database = {
           cnae_principal?: string | null
           cnpj?: string
           complemento?: string | null
+          contrato_auto_renovacao?: boolean
+          contrato_inicio?: string | null
+          contrato_vencimento?: string | null
           created_at?: string
           data_abertura?: string | null
           data_proxima_cobranca?: string | null
           ecpf_r2_path?: string | null
           ecpf_senha_encrypted?: string | null
           ecpf_validade?: string | null
+          email_contato?: string | null
           email_operacional?: string
           email_responsavel?: string
           enriched_at?: string | null
+          enviar_alerta_vigilante?: boolean
           habilitada?: boolean
           id?: string
+          last_payment_date?: string | null
           logradouro?: string | null
           matriz_id?: string | null
+          monthly_cost?: number | null
           municipio?: string | null
           natureza_juridica?: string | null
+          next_billing_date?: string | null
           nome_fantasia?: string | null
           numero?: string | null
           plano?: string
@@ -1252,6 +1288,7 @@ export type Database = {
           aptidao_porte_arma: boolean | null
           arma_numero_serie: string | null
           bairro: string | null
+          cargo_gesp: string | null
           cep: string | null
           cidade: string | null
           cnv_data_emissao: string
@@ -1286,8 +1323,10 @@ export type Database = {
           nome_mae: string
           nome_pai: string | null
           numero: string | null
+          pis: string | null
           porte_arma_validade: string | null
           posto_designado: string | null
+          receber_alertas: boolean
           reciclagem_data_ultimo_curso: string | null
           reciclagem_data_validade: string | null
           reciclagem_escola: string | null
@@ -1297,6 +1336,7 @@ export type Database = {
           rg_orgao_emissor: string
           rg_uf: string
           sexo: string
+          situacao_pessoa: string | null
           status: string
           telefone1: string
           telefone2: string | null
@@ -1305,6 +1345,7 @@ export type Database = {
           uf: string | null
           uf_trabalho: string | null
           updated_at: string
+          vinculo_empregaticio: string | null
         }
         Insert: {
           alertas_ativos?: Json
@@ -1312,6 +1353,7 @@ export type Database = {
           aptidao_porte_arma?: boolean | null
           arma_numero_serie?: string | null
           bairro?: string | null
+          cargo_gesp?: string | null
           cep?: string | null
           cidade?: string | null
           cnv_data_emissao: string
@@ -1346,8 +1388,10 @@ export type Database = {
           nome_mae: string
           nome_pai?: string | null
           numero?: string | null
+          pis?: string | null
           porte_arma_validade?: string | null
           posto_designado?: string | null
+          receber_alertas?: boolean
           reciclagem_data_ultimo_curso?: string | null
           reciclagem_data_validade?: string | null
           reciclagem_escola?: string | null
@@ -1357,6 +1401,7 @@ export type Database = {
           rg_orgao_emissor: string
           rg_uf: string
           sexo: string
+          situacao_pessoa?: string | null
           status?: string
           telefone1: string
           telefone2?: string | null
@@ -1365,6 +1410,7 @@ export type Database = {
           uf?: string | null
           uf_trabalho?: string | null
           updated_at?: string
+          vinculo_empregaticio?: string | null
         }
         Update: {
           alertas_ativos?: Json
@@ -1372,6 +1418,7 @@ export type Database = {
           aptidao_porte_arma?: boolean | null
           arma_numero_serie?: string | null
           bairro?: string | null
+          cargo_gesp?: string | null
           cep?: string | null
           cidade?: string | null
           cnv_data_emissao?: string
@@ -1406,8 +1453,10 @@ export type Database = {
           nome_mae?: string
           nome_pai?: string | null
           numero?: string | null
+          pis?: string | null
           porte_arma_validade?: string | null
           posto_designado?: string | null
+          receber_alertas?: boolean
           reciclagem_data_ultimo_curso?: string | null
           reciclagem_data_validade?: string | null
           reciclagem_escola?: string | null
@@ -1417,6 +1466,7 @@ export type Database = {
           rg_orgao_emissor?: string
           rg_uf?: string
           sexo?: string
+          situacao_pessoa?: string | null
           status?: string
           telefone1?: string
           telefone2?: string | null
@@ -1425,6 +1475,7 @@ export type Database = {
           uf?: string | null
           uf_trabalho?: string | null
           updated_at?: string
+          vinculo_empregaticio?: string | null
         }
         Relationships: [
           {
@@ -2522,6 +2573,7 @@ export type Database = {
           data_abertura: string | null
           data_conversao: string | null
           email: string | null
+          email_contato: string | null
           id: string
           importado_por: string | null
           logradouro: string | null
@@ -2564,6 +2616,7 @@ export type Database = {
           data_abertura?: string | null
           data_conversao?: string | null
           email?: string | null
+          email_contato?: string | null
           id?: string
           importado_por?: string | null
           logradouro?: string | null
@@ -2606,6 +2659,7 @@ export type Database = {
           data_abertura?: string | null
           data_conversao?: string | null
           email?: string | null
+          email_contato?: string | null
           id?: string
           importado_por?: string | null
           logradouro?: string | null
@@ -2929,7 +2983,9 @@ export type Database = {
           deve_trocar_senha: boolean
           email: string
           id: string
+          mfa_ativo: boolean
           mfa_enabled: boolean
+          mfa_secret: string | null
           nome: string
           password_hash: string
           role: string
@@ -2943,7 +2999,9 @@ export type Database = {
           deve_trocar_senha?: boolean
           email: string
           id?: string
+          mfa_ativo?: boolean
           mfa_enabled?: boolean
+          mfa_secret?: string | null
           nome: string
           password_hash: string
           role?: string
@@ -2957,7 +3015,9 @@ export type Database = {
           deve_trocar_senha?: boolean
           email?: string
           id?: string
+          mfa_ativo?: boolean
           mfa_enabled?: boolean
+          mfa_secret?: string | null
           nome?: string
           password_hash?: string
           role?: string
@@ -3461,6 +3521,57 @@ export type Database = {
       }
     }
     Views: {
+      billing: {
+        Row: {
+          amount: number | null
+          asaas_payment_id: string | null
+          company_id: string | null
+          created_at: string | null
+          due_date: string | null
+          id: string | null
+          metodo_pagamento: string | null
+          paid_date: string | null
+          status: string | null
+        }
+        Insert: {
+          amount?: number | null
+          asaas_payment_id?: string | null
+          company_id?: string | null
+          created_at?: string | null
+          due_date?: string | null
+          id?: string | null
+          metodo_pagamento?: string | null
+          paid_date?: string | null
+          status?: string | null
+        }
+        Update: {
+          amount?: number | null
+          asaas_payment_id?: string | null
+          company_id?: string | null
+          created_at?: string | null
+          due_date?: string | null
+          id?: string | null
+          metodo_pagamento?: string | null
+          paid_date?: string | null
+          status?: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "billing_history_company_id_fkey"
+            columns: ["company_id"]
+            isOneToOne: false
+            referencedRelation: "companies"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "billing_history_company_id_fkey"
+            columns: ["company_id"]
+            isOneToOne: false
+            referencedRelation: "vw_billing_resumo"
+            referencedColumns: ["company_id"]
+          },
+        ]
+      }
       dou_monitor_summary: {
         Row: {
           alertas_enviados: number | null
