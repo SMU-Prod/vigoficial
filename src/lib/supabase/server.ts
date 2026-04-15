@@ -2,11 +2,12 @@ import { createServerClient } from "@supabase/ssr";
 import { createClient } from "@supabase/supabase-js";
 import { cookies } from "next/headers";
 import { env } from "@/lib/config/env"; // OPS-02: Use validated env instead of process.env
+import type { Database } from "@/types/supabase";
 
 export async function createSupabaseServer() {
   const cookieStore = await cookies();
 
-  return createServerClient(
+  return createServerClient<Database>(
     env.NEXT_PUBLIC_SUPABASE_URL,
     env.NEXT_PUBLIC_SUPABASE_ANON_KEY,
     {
@@ -39,9 +40,10 @@ export async function createSupabaseServer() {
  * Build-safe: durante `next build` (Collecting page data) as env vars
  * podem não existir. Retorna um Proxy stub que nunca será chamado no build.
  */
-let _adminClient: ReturnType<typeof createClient> | null = null;
+type AdminClient = ReturnType<typeof createClient<Database>>;
+let _adminClient: AdminClient | null = null;
 
-export function createSupabaseAdmin() {
+export function createSupabaseAdmin(): AdminClient {
   // Singleton: reutiliza a mesma instância
   if (_adminClient) return _adminClient;
 
@@ -51,7 +53,7 @@ export function createSupabaseAdmin() {
   // Durante o build phase do Next.js, env vars são undefined.
   // Retorna proxy stub — nunca será chamado em build, só em runtime.
   if (!url || !key) {
-    return new Proxy({} as ReturnType<typeof createClient>, {
+    return new Proxy({} as AdminClient, {
       get(_target, prop) {
         // Permite typeof checks e toString sem explodir
         if (prop === Symbol.toPrimitive || prop === "toString" || prop === "valueOf") {
@@ -64,7 +66,7 @@ export function createSupabaseAdmin() {
     });
   }
 
-  _adminClient = createClient(url, key, {
+  _adminClient = createClient<Database>(url, key, {
     auth: {
       autoRefreshToken: false,
       persistSession: false,
