@@ -1,0 +1,94 @@
+name: Cron Jobs
+
+# ──────────────────────────────────────────────────────────────────
+# Agenda todos os cron jobs do VIG PRO via GitHub Actions.
+# Cada job chama o endpoint /api/cron/* correspondente no Railway.
+#
+# Horários: configurados em UTC (GitHub Actions não aceita TZ).
+# Brasil (BRT) = UTC-3. Exemplo: 06h BR = 09h UTC.
+#
+# Secrets necessários (Settings → Secrets and variables → Actions):
+#   - CRON_SECRET: mesmo valor da env var no Railway
+#   - APP_URL:     URL pública do web (ex: https://vigoficial-production.up.railway.app)
+# ──────────────────────────────────────────────────────────────────
+
+on:
+  schedule:
+    # health-check: a cada 5 minutos
+    - cron: "*/5 * * * *"
+    # light (compliance/gesp/fleet): a cada 15 minutos
+    - cron: "*/15 * * * *"
+    # prospector: diário 06:00 BR = 09:00 UTC
+    - cron: "0 9 * * *"
+    # billing: diário 08:00 BR = 11:00 UTC
+    - cron: "0 11 * * *"
+    # iml-distill: diário 03:00 BR = 06:00 UTC
+    - cron: "0 6 * * *"
+    # reports: segunda 07:00 BR = 10:00 UTC
+    - cron: "0 10 * * 1"
+  workflow_dispatch:
+    inputs:
+      endpoint:
+        description: "Endpoint a disparar manualmente"
+        required: true
+        type: choice
+        options:
+          - light
+          - prospector
+          - billing
+          - reports
+          - health-check
+          - iml-distill
+
+jobs:
+  cron:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Determinar endpoint do cron
+        id: route
+        run: |
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            echo "endpoint=${{ github.event.inputs.endpoint }}" >> "$GITHUB_OUTPUT"
+          else
+            case "${{ github.event.schedule }}" in
+              "*/5 * * * *")    echo "endpoint=health-check" >> "$GITHUB_OUTPUT" ;;
+              "*/15 * * * *")   echo "endpoint=light"         >> "$GITHUB_OUTPUT" ;;
+              "0 9 * * *")      echo "endpoint=prospector"    >> "$GITHUB_OUTPUT" ;;
+              "0 11 * * *")     echo "endpoint=billing"       >> "$GITHUB_OUTPUT" ;;
+              "0 6 * * *")      echo "endpoint=iml-distill"   >> "$GITHUB_OUTPUT" ;;
+              "0 10 * * 1")     echo "endpoint=reports"       >> "$GITHUB_OUTPUT" ;;
+              *) echo "Schedule desconhecido: ${{ github.event.schedule }}" && exit 1 ;;
+            esac
+          fi
+
+      - name: Chamar /api/cron/${{ steps.route.outputs.endpoint }}
+        env:
+          CRON_SECRET: ${{ secrets.CRON_SECRET }}
+          APP_URL: ${{ secrets.APP_URL }}
+          ENDPOINT: ${{ steps.route.outputs.endpoint }}
+        run: |
+          URL="$APP_URL/api/cron/$ENDPOINT"
+          # health-check é GET; demais rotas são POST
+          case "$ENDPOINT" in
+            health-check) METHOD="GET" ;;
+            *)            METHOD="POST" ;;
+          esac
+          # HMAC-SHA256 auth: Authorization: CRON-HMAC-SHA256 <iso_timestamp>:<hex_hmac>
+          TIMESTAMP=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
+          HMAC=$(printf '%s' "$TIMESTAMP" | openssl dgst -sha256 -hmac "$CRON_SECRET" -hex | awk '{print $NF}')
+          AUTH="CRON-HMAC-SHA256 $TIMESTAMP:$HMAC"
+          echo "$METHOD $URL (ts=$TIMESTAMP)"
+          HTTP_CODE=$(curl -sS -o /tmp/body.txt -w "%{http_code}" \
+            -X "$METHOD" "$URL" \
+            -H "Authorization: $AUTH" \
+            -H "x-cron-secret: $CRON_SECRET" \
+            -H "Content-Type: application/json" \
+            --max-time 300)
+          echo "HTTP $HTTP_CODE"
+          echo "Body:"
+          cat /tmp/body.txt
+          echo ""
+          if [ "$HTTP_CODE" -lt 200 ] || [ "$HTTP_CODE" -ge 300 ]; then
+            echo "::error::Cron falhou com HTTP $HTTP_CODE"
+            exit 1
+          fi
