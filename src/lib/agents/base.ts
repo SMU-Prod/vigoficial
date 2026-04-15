@@ -291,8 +291,38 @@ export async function logAgentDecision(
       human_override: params.reasoning,
     };
   } else {
-    // Positional parameter style (from orquestrador)
-    recordToInsert = decisionData || {};
+    // Positional parameter style (from orquestrador).
+    // The caller passes arbitrary fields — we can't just insert them because
+    // agent_decisions has a strict schema. Whitelist valid columns and dump
+    // the rest into output_summary as JSON so nothing is lost.
+    const runId = paramsOrRunId;
+    const raw = (decisionData || {}) as Record<string, unknown>;
+    const validColumns = new Set([
+      "run_id", "agent_name", "step_name", "decision_type",
+      "input_summary", "output_summary", "confidence", "model_used",
+      "tokens_input", "tokens_output", "latency_ms",
+      "escalated_to_human", "human_override",
+    ]);
+    const whitelisted: Record<string, unknown> = { run_id: runId };
+    const overflow: Record<string, unknown> = {};
+    for (const [k, v] of Object.entries(raw)) {
+      if (validColumns.has(k)) whitelisted[k] = v;
+      else overflow[k] = v;
+    }
+    // Derive decision_type from the "decision" / "action" fields if missing.
+    // Table constraint allows: classification|extraction|routing|action|escalation|approval
+    if (!whitelisted.decision_type) {
+      whitelisted.decision_type = "action";
+    }
+    // Preserve overflow data in output_summary so nothing is lost to observability.
+    if (Object.keys(overflow).length > 0 && !whitelisted.output_summary) {
+      try {
+        whitelisted.output_summary = JSON.stringify(overflow);
+      } catch {
+        whitelisted.output_summary = String(overflow);
+      }
+    }
+    recordToInsert = whitelisted;
   }
 
   const { data, error } = await supabase
