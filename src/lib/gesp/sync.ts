@@ -349,13 +349,13 @@ export async function syncEmpresa(companyId: string) {
             }
 
             case "verificar_pendencias": {
-              const r = await browser.verificarPendencias(task.payload.processo_id as string);
+              const r = await browser.verificarPendencias((task.payload as Record<string, unknown>)?.processo_id as string);
               resultado = { protocolo: `pendencias-${r.pendencias?.length ?? 0}`, printAntes: buf(r.printAntes), printDepois: buf(r.printDepois) };
               break;
             }
 
             case "enviar_processo": {
-              const r = await browser.enviarProcesso(task.payload.processo_id as string);
+              const r = await browser.enviarProcesso((task.payload as Record<string, unknown>)?.processo_id as string);
               resultado = { protocolo: r.protocolo || `GESP-${Date.now()}`, printAntes: buf(r.printAntes), printDepois: buf(r.printDepois) };
               break;
             }
@@ -373,7 +373,7 @@ export async function syncEmpresa(companyId: string) {
             }
 
             case "enviar_turma": {
-              const r = await browser.enviarTurma(task.payload.turma_id as string);
+              const r = await browser.enviarTurma((task.payload as Record<string, unknown>)?.turma_id as string);
               resultado = { protocolo: `turma-enviada`, printAntes: buf(r.printAntes), printDepois: buf(r.printDepois) };
               break;
             }
@@ -384,7 +384,7 @@ export async function syncEmpresa(companyId: string) {
               const tipo = task.tipo_acao === "importar_pessoas_xml" ? "pessoa"
                 : task.tipo_acao === "importar_veiculos_xml" ? "veiculo"
                 : "aluno";
-              const r = await browser.importarXml(tipo, task.payload.xml_content as string);
+              const r = await browser.importarXml(tipo, (task.payload as Record<string, unknown>)?.xml_content as string);
               resultado = {
                 protocolo: r.sucesso ? `import-${tipo}-${r.registrosProcessados}` : `GESP-${Date.now()}`,
                 printAntes: buf(r.printAntes),
@@ -409,7 +409,7 @@ export async function syncEmpresa(companyId: string) {
             }
 
             case "enviar_guia": {
-              const r = await browser.enviarGuiaTransporte(task.payload.guia_id as string);
+              const r = await browser.enviarGuiaTransporte((task.payload as Record<string, unknown>)?.guia_id as string);
               resultado = { protocolo: r.numeroGuia || `GESP-${Date.now()}`, printAntes: buf(r.printAntes), printDepois: buf(r.printDepois) };
               break;
             }
@@ -454,17 +454,17 @@ export async function syncEmpresa(companyId: string) {
             }
 
             case "solicitar_cnv": {
-              const r = await browser.solicitarCNV(task.payload.cpfVigilante as string);
+              const r = await browser.solicitarCNV((task.payload as Record<string, unknown>)?.cpfVigilante as string);
               resultado = { protocolo: r.protocolo || `GESP-${Date.now()}`, printAntes: buf(r.printAntes), printDepois: buf(r.printDepois) };
               break;
             }
 
             case "responder_notificacao": {
               const r = await browser.responderNotificacao(
-                task.payload.numero_notificacao as string,
+                (task.payload as Record<string, unknown>)?.numero_notificacao as string,
                 {
-                  texto: task.payload.texto as string | undefined,
-                  arquivos: task.payload.arquivos as Array<{ buffer: Buffer; nome: string }> | undefined,
+                  texto: (task.payload as Record<string, unknown>)?.texto as string | undefined,
+                  arquivos: (task.payload as Record<string, unknown>)?.arquivos as Array<{ buffer: Buffer; nome: string }> | undefined,
                 },
               );
               resultado = { protocolo: r.protocolo || `GESP-${Date.now()}`, printAntes: buf(r.printAntes), printDepois: buf(r.printDepois) };
@@ -483,8 +483,8 @@ export async function syncEmpresa(companyId: string) {
 
             case "cadastrar_procurador": {
               const r = await browser.cadastrarProcurador(
-                task.payload.cpf_procurador as string,
-                task.payload.nome_procurador as string,
+                (task.payload as Record<string, unknown>)?.cpf_procurador as string,
+                (task.payload as Record<string, unknown>)?.nome_procurador as string,
               );
               resultado = { protocolo: r.sucesso ? `proc-ok` : `GESP-${Date.now()}`, printAntes: buf(r.printAntes), printDepois: buf(r.printDepois) };
               break;
@@ -492,7 +492,7 @@ export async function syncEmpresa(companyId: string) {
 
             // ──── CNV: Imprimir ────
             case "imprimir_cnv": {
-              const r = await browser.imprimirCNV(task.payload.cpf_vigilante as string);
+              const r = await browser.imprimirCNV((task.payload as Record<string, unknown>)?.cpf_vigilante as string);
               resultado = { protocolo: r.sucesso ? `cnv-print-ok` : `GESP-${Date.now()}`, printAntes: buf(r.printAntes), printDepois: buf(r.printDepois) };
               break;
             }
@@ -500,8 +500,8 @@ export async function syncEmpresa(companyId: string) {
             // ──── Ocorrência: Fase 2 — Complementação (10 dias) ────
             case "enviar_complementacao_ocorrencia": {
               const r = await browser.enviarComplementacaoOcorrencia(
-                task.payload.protocolo_fase1 as string,
-                { descricao: task.payload.texto as string, arquivos: task.payload.documentos as Array<{ buffer: Buffer; nome: string }> | undefined },
+                (task.payload as Record<string, unknown>)?.protocolo_fase1 as string,
+                { descricao: (task.payload as Record<string, unknown>)?.texto as string, arquivos: (task.payload as Record<string, unknown>)?.documentos as Array<{ buffer: Buffer; nome: string }> | undefined },
               );
               resultado = { protocolo: r.protocolo || `GESP-${Date.now()}`, printAntes: buf(r.printAntes), printDepois: buf(r.printDepois) };
               break;
@@ -509,21 +509,21 @@ export async function syncEmpresa(companyId: string) {
 
             // ──── Turma: Comunicações de Lifecycle ────
             case "comunicar_inicio_turma": {
-              const r = await browser.comunicarInicioTurma(task.payload.turma_id as string);
+              const r = await browser.comunicarInicioTurma((task.payload as Record<string, unknown>)?.turma_id as string);
               resultado = { protocolo: r.protocolo || `turma-inicio`, printAntes: buf(r.printAntes), printDepois: buf(r.printDepois) };
               break;
             }
 
             case "comunicar_conclusao_turma": {
-              const r = await browser.comunicarConclusaoTurma(task.payload.turma_id as string);
+              const r = await browser.comunicarConclusaoTurma((task.payload as Record<string, unknown>)?.turma_id as string);
               resultado = { protocolo: r.protocolo || `turma-conclusao`, printAntes: buf(r.printAntes), printDepois: buf(r.printDepois) };
               break;
             }
 
             case "comunicar_cancelamento_turma": {
               const r = await browser.comunicarCancelamentoTurma(
-                task.payload.turma_id as string,
-                task.payload.motivo as string,
+                (task.payload as Record<string, unknown>)?.turma_id as string,
+                (task.payload as Record<string, unknown>)?.motivo as string,
               );
               resultado = { protocolo: r.protocolo || `turma-cancelada`, printAntes: buf(r.printAntes), printDepois: buf(r.printDepois) };
               break;
@@ -532,8 +532,8 @@ export async function syncEmpresa(companyId: string) {
             // ──── Turma: Adicionar aluno e disciplinas ────
             case "adicionar_aluno_turma": {
               const r = await browser.importarAlunosTurma(
-                task.payload.turma_id as string,
-                task.payload.xml_content as string,
+                (task.payload as Record<string, unknown>)?.turma_id as string,
+                (task.payload as Record<string, unknown>)?.xml_content as string,
               );
               resultado = { protocolo: r.protocolo || `alunos-${r.alunosImportados}`, printAntes: buf(r.printAntes), printDepois: buf(r.printDepois) };
               break;
@@ -541,8 +541,8 @@ export async function syncEmpresa(companyId: string) {
 
             case "definir_disciplinas_turma": {
               const r = await browser.definirDisciplinasTurma(
-                task.payload.turma_id as string,
-                task.payload.disciplinas as string[],
+                (task.payload as Record<string, unknown>)?.turma_id as string,
+                (task.payload as Record<string, unknown>)?.disciplinas as string[],
               );
               resultado = { protocolo: r.protocolo || `GESP-${Date.now()}`, printAntes: buf(r.printAntes), printDepois: buf(r.printDepois) };
               break;
@@ -551,11 +551,11 @@ export async function syncEmpresa(companyId: string) {
             // ──── Processo Autorizativo: Adicionar documento ────
             case "adicionar_documento_processo": {
               const r = await browser.adicionarDocumentoProcesso(
-                task.payload.processo_id as string,
+                (task.payload as Record<string, unknown>)?.processo_id as string,
                 {
-                  nome: task.payload.doc_nome as string,
-                  tipo: task.payload.doc_tipo as string,
-                  buffer: task.payload.doc_buffer as Buffer,
+                  nome: (task.payload as Record<string, unknown>)?.doc_nome as string,
+                  tipo: (task.payload as Record<string, unknown>)?.doc_tipo as string,
+                  buffer: (task.payload as Record<string, unknown>)?.doc_buffer as Buffer,
                 },
               );
               resultado = { protocolo: r.sucesso ? `doc-ok` : `GESP-${Date.now()}`, printAntes: buf(r.printAntes), printDepois: buf(r.printDepois) };
@@ -602,8 +602,8 @@ export async function syncEmpresa(companyId: string) {
 
             case "enviar_defesa_punitivo": {
               const r = await browser.enviarDefesaPunitivo(
-                task.payload.numero_processo as string,
-                { fundamentacao: task.payload.texto as string },
+                (task.payload as Record<string, unknown>)?.numero_processo as string,
+                { fundamentacao: (task.payload as Record<string, unknown>)?.texto as string },
               );
               resultado = { protocolo: r.protocolo || `defesa-enviada`, printAntes: buf(r.printAntes), printDepois: buf(r.printDepois) };
               break;
@@ -611,23 +611,23 @@ export async function syncEmpresa(companyId: string) {
 
             case "interpor_recurso_punitivo": {
               const r = await browser.interporRecursoPunitivo(
-                task.payload.numero_processo as string,
-                { fundamentacao: task.payload.texto as string },
+                (task.payload as Record<string, unknown>)?.numero_processo as string,
+                { fundamentacao: (task.payload as Record<string, unknown>)?.texto as string },
               );
               resultado = { protocolo: r.protocolo || `recurso-enviado`, printAntes: buf(r.printAntes), printDepois: buf(r.printDepois) };
               break;
             }
 
             case "gerar_gru_multa": {
-              const r = await browser.gerarGruMulta(task.payload.numero_processo as string);
+              const r = await browser.gerarGruMulta((task.payload as Record<string, unknown>)?.numero_processo as string);
               resultado = { protocolo: r.gruLinhaDigitavel || `GESP-${Date.now()}`, printAntes: buf(r.printAntes), printDepois: buf(r.printDepois) };
               break;
             }
 
             case "declarar_pagamento_multa": {
               const r = await browser.declararPagamentoMulta(
-                task.payload.numero_processo as string,
-                task.payload.gru_linha_digitavel as string,
+                (task.payload as Record<string, unknown>)?.numero_processo as string,
+                (task.payload as Record<string, unknown>)?.gru_linha_digitavel as string,
               );
               resultado = { protocolo: r.protocolo || `pagamento-declarado`, printAntes: buf(r.printAntes), printDepois: buf(r.printDepois) };
               break;
@@ -635,8 +635,8 @@ export async function syncEmpresa(companyId: string) {
 
             case "restituicao_multa": {
               const r = await browser.solicitarRestituicaoMulta(
-                task.payload.numero_processo as string,
-                task.payload.justificativa as string,
+                (task.payload as Record<string, unknown>)?.numero_processo as string,
+                (task.payload as Record<string, unknown>)?.justificativa as string,
               );
               resultado = { protocolo: r.protocolo || `GESP-${Date.now()}`, printAntes: buf(r.printAntes), printDepois: buf(r.printDepois) };
               break;
@@ -657,7 +657,7 @@ export async function syncEmpresa(companyId: string) {
 
             // ──── Consulta GRU ────
             case "consultar_gru": {
-              const r = await browser.consultarGru(task.payload.linha_digitavel as string);
+              const r = await browser.consultarGru((task.payload as Record<string, unknown>)?.linha_digitavel as string);
               resultado = {
                 protocolo: `gru-consultada`,
                 printAntes: buf(r.printScreen ?? await browser.screenshot("gru-consulta")),
@@ -750,7 +750,7 @@ export async function syncEmpresa(companyId: string) {
 
             // ──── Processo Bancário: Editar Rascunho ────
             case "editar_rascunho_bancario": {
-              const r = await browser.editarRascunhoBancario(task.payload.numero_rascunho as string);
+              const r = await browser.editarRascunhoBancario((task.payload as Record<string, unknown>)?.numero_rascunho as string);
               resultado = { protocolo: r.protocolo || `GESP-${Date.now()}`, printAntes: buf(r.printAntes), printDepois: buf(r.printDepois) };
               break;
             }
@@ -758,10 +758,10 @@ export async function syncEmpresa(companyId: string) {
             // ──── Processo Bancário: Responder Notificação ────
             case "responder_notificacao_bancario": {
               const r = await browser.responderNotificacaoBancaria(
-                task.payload.numero_notificacao as string,
+                (task.payload as Record<string, unknown>)?.numero_notificacao as string,
                 {
-                  texto: task.payload.texto as string,
-                  arquivos: task.payload.arquivos as Array<{ buffer: Buffer; nome: string }> | undefined,
+                  texto: (task.payload as Record<string, unknown>)?.texto as string,
+                  arquivos: (task.payload as Record<string, unknown>)?.arquivos as Array<{ buffer: Buffer; nome: string }> | undefined,
                 },
               );
               resultado = { protocolo: r.protocolo || `GESP-${Date.now()}`, printAntes: buf(r.printAntes), printDepois: buf(r.printDepois) };
@@ -771,10 +771,10 @@ export async function syncEmpresa(companyId: string) {
             // ──── Processo Bancário: Interpor Recurso ────
             case "interpor_recurso_bancario": {
               const r = await browser.interporRecursoBancario(
-                task.payload.numero_processo as string,
+                (task.payload as Record<string, unknown>)?.numero_processo as string,
                 {
-                  fundamentacao: task.payload.fundamentacao as string | undefined,
-                  arquivos: task.payload.arquivos as Array<{ buffer: Buffer; nome: string }> | undefined,
+                  fundamentacao: (task.payload as Record<string, unknown>)?.fundamentacao as string | undefined,
+                  arquivos: (task.payload as Record<string, unknown>)?.arquivos as Array<{ buffer: Buffer; nome: string }> | undefined,
                 },
               );
               resultado = { protocolo: r.protocolo || `GESP-${Date.now()}`, printAntes: buf(r.printAntes), printDepois: buf(r.printDepois) };
@@ -790,7 +790,7 @@ export async function syncEmpresa(companyId: string) {
               // Usam o fluxo: criarProcessoAutorizativo → verificarPendencias → enviarProcesso
               const r = await browser.criarProcessoAutorizativo({
                 tipo: task.tipo_acao,
-                descricao: task.payload.descricao as string | undefined,
+                descricao: (task.payload as Record<string, unknown>)?.descricao as string | undefined,
               });
               resultado = { protocolo: r.protocolo || `GESP-${Date.now()}`, printAntes: buf(r.printAntes), printDepois: buf(r.printDepois) };
               break;
