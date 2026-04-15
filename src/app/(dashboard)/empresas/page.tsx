@@ -451,6 +451,14 @@ export default function EmpresasPage() {
         subtitle="Gerenciamento de empresas"
         actions={
           <div className="flex items-center gap-2">
+            <a
+              href="/empresas/cerebro"
+              className="text-[13px] px-3 py-2 rounded-md border transition-colors hover:bg-[var(--bg-hover)]"
+              style={{ borderColor: "var(--border-primary)", color: "var(--vigi-navy)" }}
+              title="Ver tudo o que o sistema sabe sobre cada CNPJ (empresas + prospects)"
+            >
+              🧠 Cérebro Empresarial
+            </a>
             <ExportButton
               data={companies}
               filename="empresas"
