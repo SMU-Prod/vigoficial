@@ -20,9 +20,11 @@ jobs:
       - name: Run npm audit
         run: npm audit --audit-level=moderate
 
-      # Secret scanning with gitleaks
+      # Secret scanning with gitleaks (v2 requires GITHUB_TOKEN to scan PRs)
       - name: Run gitleaks secret scanning
         uses: gitleaks/gitleaks-action@v2
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
   lint:
     runs-on: ubuntu-latest

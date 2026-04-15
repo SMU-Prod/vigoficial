@@ -6,6 +6,7 @@ import { signToken, signMfaTempToken } from "@/lib/auth/jwt";
 import { rateLimit, rateLimitConfig, createRateLimitResponse, resetRateLimit } from "@/lib/security/rate-limit";
 import { validateBody, loginSchema } from "@/lib/validation/schemas";
 import { validateCsrf } from "@/lib/security/csrf-middleware"; // FE-02
+import type { UserRole } from "@/types/database";
 // Token é retornado no body — o cookie é setado pelo middleware em /auth/callback
 
 /**
@@ -126,7 +127,7 @@ export async function POST(request: NextRequest) {
     const token = signToken({
       userId: user.id,
       email: user.email,
-      role: user.role,
+      role: user.role as UserRole,
       companyIds: user.company_ids || [],
     });
 
