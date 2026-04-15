@@ -98,7 +98,7 @@ export async function GET(
       }
     };
 
-    const empty = Promise.resolve({ data: [], error: null });
+    const empty: Promise<unknown[]> = Promise.resolve([]);
 
     const [
       employees,

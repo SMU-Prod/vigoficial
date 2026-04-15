@@ -130,7 +130,53 @@ export default function CerebroPage() {
         if (data.error) {
           setDetailError(data.error);
         } else {
-          setDetail(data as BrainDetail);
+          // Defensive: guarantee every list is an array even if API glitches
+          const asArr = (v: unknown): unknown[] => (Array.isArray(v) ? v : []);
+          const normalized: BrainDetail = {
+            type: data.type,
+            base: data.base || {},
+            cnpj: data.cnpj ?? null,
+            companyId: data.companyId ?? null,
+            vigilantes: asArr(data.vigilantes) as BrainDetail["vigilantes"],
+            frota: {
+              veiculos: asArr(data.frota?.veiculos) as BrainDetail["frota"]["veiculos"],
+              manutencoes: asArr(data.frota?.manutencoes) as BrainDetail["frota"]["manutencoes"],
+            },
+            armamento: {
+              armas: asArr(data.armamento?.armas) as BrainDetail["armamento"]["armas"],
+              coletes: asArr(data.armamento?.coletes) as BrainDetail["armamento"]["coletes"],
+            },
+            gesp: {
+              tasks: asArr(data.gesp?.tasks) as BrainDetail["gesp"]["tasks"],
+              sessions: asArr(data.gesp?.sessions) as BrainDetail["gesp"]["sessions"],
+              approvals: asArr(data.gesp?.approvals) as BrainDetail["gesp"]["approvals"],
+              snapshots: asArr(data.gesp?.snapshots) as BrainDetail["gesp"]["snapshots"],
+              procuracoes: asArr(data.gesp?.procuracoes) as BrainDetail["gesp"]["procuracoes"],
+            },
+            emails: {
+              threads: asArr(data.emails?.threads) as BrainDetail["emails"]["threads"],
+              inbound: asArr(data.emails?.inbound) as BrainDetail["emails"]["inbound"],
+              outbound: asArr(data.emails?.outbound) as BrainDetail["emails"]["outbound"],
+              workflows: asArr(data.emails?.workflows) as BrainDetail["emails"]["workflows"],
+            },
+            dou: {
+              alvaras: asArr(data.dou?.alvaras) as BrainDetail["dou"]["alvaras"],
+              alertas: asArr(data.dou?.alertas) as BrainDetail["dou"]["alertas"],
+            },
+            billing: { history: asArr(data.billing?.history) as BrainDetail["billing"]["history"] },
+            ai: {
+              runs: asArr(data.ai?.runs) as BrainDetail["ai"]["runs"],
+              events: asArr(data.ai?.events) as BrainDetail["ai"]["events"],
+            },
+            discrepancias: asArr(data.discrepancias) as BrainDetail["discrepancias"],
+            notifications: asArr(data.notifications) as BrainDetail["notifications"],
+            prospect: {
+              activities: asArr(data.prospect?.activities) as BrainDetail["prospect"]["activities"],
+            },
+            filiais: asArr(data.filiais) as BrainDetail["filiais"],
+            instructions: asArr(data.instructions) as BrainDetail["instructions"],
+          };
+          setDetail(normalized);
         }
       })
       .catch((e) => {
