@@ -293,31 +293,46 @@ export async function GET(
           )
         : empty,
 
-      // DOU — busca por CNPJ (funciona pra prospect também)
-      cnpj
-        ? safeFetch("dou_alvaras", () =>
-            supabase
+      // DOU — busca por CNPJ limpo E também por razão social (fallback).
+      // cnpj_limpo armazena 14 dígitos sem máscara. Tentamos também CNPJ bruto
+      // e a razão social por OR, pegando qualquer forma de match.
+      cnpj || base.razao_social
+        ? safeFetch("dou_alvaras", () => {
+            const cnpjLimpo = cnpj ? cnpj.replace(/\D/g, "") : "";
+            const razao = String((base as Record<string, unknown>).razao_social || "").trim();
+            // ilike com % casa parciais — útil pq DOU às vezes escreve razão diferente
+            const orParts: string[] = [];
+            if (cnpjLimpo) orParts.push(`cnpj_limpo.eq.${cnpjLimpo}`);
+            if (cnpj) orParts.push(`cnpj.eq.${cnpj}`);
+            if (razao && razao.length > 3)
+              orParts.push(`razao_social.ilike.%${razao.replace(/%/g, "")}%`);
+            let q = supabase
               .from("dou_alvaras")
               .select(
                 "id, razao_social, tipo_alvara, subtipo, numero_processo, delegacia, uf, municipio, data_validade, texto_original, created_at"
               )
-              .eq("cnpj_limpo", cnpj.replace(/\D/g, ""))
               .order("created_at", { ascending: false })
-              .limit(20)
-          )
+              .limit(20);
+            if (orParts.length > 0) q = q.or(orParts.join(","));
+            return q;
+          })
         : empty,
 
       cnpj
-        ? safeFetch("dou_alertas", () =>
-            supabase
+        ? safeFetch("dou_alertas", () => {
+            const cnpjLimpo = cnpj ? cnpj.replace(/\D/g, "") : "";
+            let q = supabase
               .from("dou_alertas")
               .select(
                 "id, tipo_alerta, titulo, mensagem, prioridade, status, enviado_em, created_at"
               )
-              .eq("cnpj", cnpj)
               .order("created_at", { ascending: false })
-              .limit(20)
-          )
+              .limit(20);
+            // cnpj na tabela dou_alertas pode vir formatado ou limpo — tenta os dois
+            if (cnpjLimpo) q = q.or(`cnpj.eq.${cnpj},cnpj.eq.${cnpjLimpo}`);
+            else q = q.eq("cnpj", cnpj);
+            return q;
+          })
         : empty,
 
       // Billing
