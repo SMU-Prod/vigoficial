@@ -23,36 +23,44 @@ import type { AgentName, TriggerType, AgentRunStatus } from '@/lib/agents/types'
 // Mock external dependencies
 vi.mock('@/lib/supabase/server', () => ({
   createSupabaseAdmin: vi.fn(() => {
-    const queryBuilder = {
+    // Default payload returned when the chain is awaited directly (no .single()).
+    const defaultResolved = {
+      data: [{ id: 'run-123', started_at: new Date().toISOString() }],
+      error: null,
+    }
+    const queryBuilder: Record<string, unknown> = {
       select: vi.fn().mockReturnThis(),
       insert: vi.fn().mockReturnThis(),
       update: vi.fn().mockReturnThis(),
       delete: vi.fn().mockReturnThis(),
+      upsert: vi.fn().mockReturnThis(),
       eq: vi.fn().mockReturnThis(),
+      neq: vi.fn().mockReturnThis(),
       in: vi.fn().mockReturnThis(),
       lt: vi.fn().mockReturnThis(),
+      lte: vi.fn().mockReturnThis(),
+      gt: vi.fn().mockReturnThis(),
       gte: vi.fn().mockReturnThis(),
+      or: vi.fn().mockReturnThis(),
+      ilike: vi.fn().mockReturnThis(),
+      order: vi.fn().mockReturnThis(),
+      limit: vi.fn().mockReturnThis(),
+      range: vi.fn().mockReturnThis(),
       single: vi.fn().mockResolvedValue({
         data: { id: 'run-123', started_at: new Date().toISOString() },
         error: null,
       }),
+      maybeSingle: vi.fn().mockResolvedValue({
+        data: { id: 'run-123', started_at: new Date().toISOString() },
+        error: null,
+      }),
+      // Thenable so `await supabase.from().select()...` without .single() resolves
+      // to { data: [...], error: null } instead of the mock object itself.
+      then: (resolve: (v: typeof defaultResolved) => unknown) => resolve(defaultResolved),
     }
 
     return {
-      from: vi.fn(function(table: string) {
-        // Reset mocks for each call
-        queryBuilder.select.mockReturnThis()
-        queryBuilder.insert.mockReturnThis()
-        queryBuilder.update.mockReturnThis()
-        queryBuilder.delete.mockReturnThis()
-        queryBuilder.eq.mockReturnThis()
-        queryBuilder.in.mockReturnThis()
-        queryBuilder.lt.mockReturnThis()
-        queryBuilder.gte.mockReturnThis()
-        queryBuilder.single.mockResolvedValue({
-          data: { id: 'run-123', started_at: new Date().toISOString() },
-          error: null,
-        })
+      from: vi.fn(function (_table: string) {
         return queryBuilder
       }),
     }
