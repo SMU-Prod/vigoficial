@@ -37,6 +37,9 @@ jobs:
 
   typecheck:
     runs-on: ubuntu-latest
+    env:
+      # Supabase generated types are ~4k lines; default 2GB heap OOMs.
+      NODE_OPTIONS: "--max-old-space-size=6144"
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
@@ -44,7 +47,7 @@ jobs:
           node-version: 20
           cache: "npm"
       - run: npm ci
-      - run: npx tsc --noEmit
+      - run: npx tsc --noEmit --incremental false
 
   test:
     runs-on: ubuntu-latest
