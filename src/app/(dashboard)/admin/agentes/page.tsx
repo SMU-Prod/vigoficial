@@ -83,26 +83,35 @@ interface AgentControlState {
 
 // ─── Helpers ───
 
-function formatDuration(ms: number | null | undefined): string {
-  if (ms === null || ms === undefined || Number.isNaN(ms)) return "—";
-  if (ms < 1000) return `${ms}ms`;
-  if (ms < 60000) return `${(ms / 1000).toFixed(1)}s`;
-  return `${(ms / 60000).toFixed(1)}min`;
+function toSafeNumber(v: unknown): number | null {
+  if (v === null || v === undefined) return null;
+  const n = typeof v === "number" ? v : Number(v);
+  return Number.isFinite(n) ? n : null;
 }
 
-function formatCost(usd: number | null | undefined): string {
-  if (usd === null || usd === undefined || Number.isNaN(usd)) return "—";
-  if (usd === 0) return "$0.00";
-  if (usd < 0.01) return `$${usd.toFixed(4)}`;
-  return `$${usd.toFixed(2)}`;
+function formatDuration(ms: unknown): string {
+  const n = toSafeNumber(ms);
+  if (n === null) return "—";
+  if (n < 1000) return `${n}ms`;
+  if (n < 60000) return `${(n / 1000).toFixed(1)}s`;
+  return `${(n / 60000).toFixed(1)}min`;
 }
 
-function formatTokens(tokens: number | null | undefined): string {
-  if (tokens === null || tokens === undefined || Number.isNaN(tokens)) return "—";
-  if (tokens === 0) return "0";
-  if (tokens < 1000) return tokens.toString();
-  if (tokens < 1000000) return `${(tokens / 1000).toFixed(1)}k`;
-  return `${(tokens / 1000000).toFixed(2)}M`;
+function formatCost(usd: unknown): string {
+  const n = toSafeNumber(usd);
+  if (n === null) return "—";
+  if (n === 0) return "$0.00";
+  if (n < 0.01) return `$${n.toFixed(4)}`;
+  return `$${n.toFixed(2)}`;
+}
+
+function formatTokens(tokens: unknown): string {
+  const n = toSafeNumber(tokens);
+  if (n === null) return "—";
+  if (n === 0) return "0";
+  if (n < 1000) return String(n);
+  if (n < 1000000) return `${(n / 1000).toFixed(1)}k`;
+  return `${(n / 1000000).toFixed(2)}M`;
 }
 
 function timeAgo(date: string): string {
@@ -448,8 +457,8 @@ export default function AgentesPage() {
               {stats ? (
                 <div className="space-y-1.5">
                   {[
-                    ["Runs (24h)", String(stats.total_runs)],
-                    ["Sucesso", stats.total_runs > 0 ? `${Math.round((stats.successful_runs / stats.total_runs) * 100)}%` : "—"],
+                    ["Runs (24h)", String(stats.total_runs ?? 0)],
+                    ["Sucesso", (stats.total_runs ?? 0) > 0 ? `${Math.round(((stats.successful_runs ?? 0) / (stats.total_runs || 1)) * 100)}%` : "—"],
                     ["Duração média", formatDuration(stats.avg_duration_ms)],
                     ["Custo", formatCost(stats.total_cost_usd)],
                     ["Tokens", formatTokens(stats.total_tokens)],
